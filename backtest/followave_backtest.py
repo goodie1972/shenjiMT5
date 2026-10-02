@@ -171,7 +171,7 @@ def run_backtest(df: pd.DataFrame, strategy_cls, label: str) -> dict:
     for t in trades:
         t.reason = t.reason or ("eod_rider" if t.exit_idx >= 0 and
                                 times[t.exit_idx] > last_ts - RIDE_WINDOW_SEC else t.reason)
-    return summarize(trades, times, label)
+    return summarize(trades, times, label), trades
 
 
 def _mk_candle(df: pd.DataFrame, i: int):
@@ -209,9 +209,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="FollowAve 四口径回测")
     parser.add_argument("--repro-days", type=int, default=180)
     parser.add_argument("--symbol", default="XAUUSD")
+    parser.add_argument("--dump-trades", default="", help="可复现窗口交易明细 CSV 输出路径")
     parser.add_argument("--out", default=os.path.join(
         REPO_ROOT, "backtest", "reports", "followave_four_gate_report.md"))
     args = parser.parse_args()
+
+    _last_trades: list = []
 
     import importlib
     m30_mod = importlib.import_module("strategies.20261002_m30_followave_v1")
@@ -226,7 +229,9 @@ def main() -> int:
         for window, wdf in (("全样本", df),
                             (f"可复现{args.repro_days}d", df[df["time"] >= repro_start])):
             label = f"{tf}-{window}"
-            r = run_backtest(wdf.copy(), _cls_of(mod), label)
+            r, trades = run_backtest(wdf.copy(), _cls_of(mod), label)
+            if tf == "M30" and window.startswith("可复现"):
+                _last_trades.extend(trades)     # 供 real-tick 抽样验证
             results.append(r)
             cls_name = tf
             rows.append(f"| {cls_name} | {window} | {r['n_trades']} | {r['n_kept']} "
@@ -255,6 +260,18 @@ def main() -> int:
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as f:
         f.write(report)
+    if args.dump_trades and _last_trades:
+        import csv
+        os.makedirs(os.path.dirname(args.dump_trades) or ".", exist_ok=True)
+        with open(args.dump_trades, "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(["direction", "ticket", "entry_idx", "entry_price",
+                        "exit_idx", "exit_price", "pnl", "reason", "partial"])
+            for t in _last_trades:
+                w.writerow([t.direction, t.ticket, t.entry_idx, t.entry_price,
+                            t.exit_idx, t.exit_price, t.pnl, t.reason,
+                            t.partial_done])
+        print(f"交易明细 → {args.dump_trades}")
     print("\n".join(rows))
     print(f"\n{verdict}")
     print(f"报告 → {args.out}")

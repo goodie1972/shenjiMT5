@@ -1,6 +1,6 @@
 # FollowAve 四口径回测报告（MT5 数据）
 
-- 生成：2026-10-02T13:50:57.758288+00:00（UTC）
+- 生成：2026-10-02T14:32:38.169843+00:00（UTC）
 - 数据：L2 研究层 XAUUSD M15/M30（见 manifest sha256）
 - 口径：信号 bar1 → 下一开盘成交；出场 bar1 评估 → 下一开盘；宽止损 bar 内 SL-first；ex-riding 4h；PnL $/0.01lot=1oz；无点差；G15 不模拟（乐观上限）
 - 策略：移植自旧库 v1.6，参数零改动（见 strategies/followave_core.py 血统注）
