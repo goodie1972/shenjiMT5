@@ -178,11 +178,49 @@ class TestGateEvaluation:
         assert r.blocked and r.gate_id == "G11"
 
     def test_fail_closed_on_gate_error(self, tmp_path, monkeypatch):
-        """门禁抛错 = 拦截（fail-closed）。用未接线的 G1 stub 验证整条 evaluate 路径。"""
+        """门禁抛错 = 拦截（fail-closed）。注入一个抛错的门禁验证 evaluate 路径。"""
         monkeypatch.setattr(settings, "SAFETY_LOCK_PATH", str(tmp_path / "no_lock.txt"))
+
+        def boom(_ctx):
+            raise RuntimeError("注入故障")
+
+        monkeypatch.setattr(gk, "GATES", [gk.GATES[0], boom, *gk.GATES[2:]])
         result = gk.evaluate(self._ctx())
         assert result.blocked is True
-        assert result.gate_id == "gate_error"      # 首个 stub（G1）抛 NotImplementedError
+        assert result.gate_id == "gate_error"
+
+    def test_g5_weekend_and_hours(self, monkeypatch):
+        from datetime import datetime, timezone
+        # 2026-10-03 = 周六 12:00 UTC → 休市
+        sat = datetime(2026, 10, 3, 12, 0, tzinfo=timezone.utc).timestamp()
+        assert gk.g5_market_open({"now": sat}).blocked is True
+        # 2026-10-04 = 周日 10:00 UTC（<21 点）→ 未开市
+        sun_am = datetime(2026, 10, 4, 10, 0, tzinfo=timezone.utc).timestamp()
+        assert gk.g5_market_open({"now": sun_am}).blocked is True
+        # 周日 22:00 UTC → 开市
+        sun_pm = datetime(2026, 10, 4, 22, 0, tzinfo=timezone.utc).timestamp()
+        assert gk.g5_market_open({"now": sun_pm}).blocked is False
+        # 周五 22:00 UTC（≥21 点）→ 已收市
+        fri_night = datetime(2026, 10, 2, 22, 0, tzinfo=timezone.utc).timestamp()
+        assert gk.g5_market_open({"now": fri_night}).blocked is True
+
+    def test_g13_direction_filter(self, monkeypatch):
+        monkeypatch.setattr(settings, "GLOBAL_DIRECTION_FILTER", "SELL_ONLY")
+        r = gk.g13_direction_filter({"direction": "BUY"})
+        assert r.blocked and r.gate_id == "G13"
+        assert gk.g13_direction_filter({"direction": "SELL"}).blocked is False
+        monkeypatch.setattr(settings, "GLOBAL_DIRECTION_FILTER", "BOTH")
+        assert gk.g13_direction_filter({"direction": "BUY"}).blocked is False
+
+    def test_g1_news_blackout_window(self):
+        now = 1_800_000_000.0
+        assert gk.g1_news_blackout({"now": now, "news_blackout_until": now + 600}).blocked
+        assert not gk.g1_news_blackout({"now": now, "news_blackout_until": None}).blocked
+
+    def test_g2_news_bias_block(self):
+        ctx = {"direction": "BUY", "news_bias_block": "BUY"}
+        assert gk.g2_news_bias(ctx).blocked
+        assert not gk.g2_news_bias({"direction": "SELL", "news_bias_block": "BUY"}).blocked
 
     def test_g0_safety_lock_blocks(self, tmp_path, monkeypatch):
         lock = tmp_path / "safety_lock.txt"

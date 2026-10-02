@@ -249,6 +249,19 @@ class MT5Client:
                 "price": result.price, "volume": result.volume,
                 "retcode": result.retcode, "filling": filling}
 
+    # ── 持仓 ─────────────────────────────────────────────────
+    def positions_open(self, symbol: str) -> list[dict]:
+        """当前持仓（G9/G4/G10 的数据源）。type: BUY/SELL。"""
+        self.ensure_connected()
+        pos = self._mt5.positions_get(symbol=symbol)
+        if pos is None:
+            raise MT5Error(f"positions_get({symbol}) 失败: {self._mt5.last_error()}")
+        return [{"ticket": p.ticket, "magic": int(p.magic),
+                 "type": "BUY" if int(p.type) == 0 else "SELL",
+                 "volume": float(p.volume), "price_open": float(p.price_open),
+                 "profit": float(p.profit), "time": int(p.time)}
+                for p in pos]
+
     # ── 成交流水（对账）───────────────────────────────────────
     def deals_history(self, from_ts_utc: float, to_ts_utc: float) -> list[dict]:
         """拉区间内全部 deals；对账按 position_id 聚合（contract_strategy §7.1）。"""

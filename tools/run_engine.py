@@ -1,0 +1,67 @@
+"""tools/run_engine.py — 引擎运行入口（M1 demo 模式，零真钱）。
+
+用法：
+  python tools/run_engine.py --smoke --duration 60   # 冒烟：跑 60 秒
+  python tools/run_engine.py --smoke --force         # 无视桶边界强制扫描一次（测试辅助）
+  python tools/run_engine.py                          # 正常常驻（Ctrl-C 停）
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import os
+import sys
+import time
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, REPO_ROOT)
+
+from config import settings
+from core.mt5_client import MT5Client
+from engine.engine import Engine
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    datefmt="%H:%M:%S")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="神机 MT5 引擎（demo）")
+    parser.add_argument("--smoke", action="store_true", help="启用 smoke 冒烟策略池")
+    parser.add_argument("--force", action="store_true", help="启动后立即强制全扫描一次")
+    parser.add_argument("--duration", type=int, default=0, help="运行秒数（0=常驻）")
+    parser.add_argument("--mode", default="demo", choices=["demo"])
+    args = parser.parse_args()
+
+    pool: dict[str, dict] = {}
+    if args.smoke:
+        pool["smoke"] = {"magic": 661901, "timeframe": "M5"}
+    if not pool:
+        parser.error("当前仅支持 --smoke 策略池（正式策略 M2 起接入）")
+
+    client = MT5Client()
+    engine = Engine(client, pool=pool, mode=args.mode)
+    engine.start()
+    try:
+        if args.force:
+            stats = engine.force_tick()
+            print(f"\nforce_tick → refreshed={stats['refreshed']}")
+        end = time.time() + args.duration if args.duration else None
+        while end is None or time.time() < end:
+            stats = engine.tick()
+            if stats["refreshed"]:
+                print(f"tick → refreshed={stats['refreshed']}")
+            engine._sleep(engine.poll_seconds)
+    except KeyboardInterrupt:
+        print("\n收到停止信号")
+    finally:
+        engine.stop()
+        client.shutdown()
+    print("引擎已停止")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

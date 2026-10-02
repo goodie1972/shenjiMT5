@@ -69,8 +69,8 @@ class TestWhitelist:
                 "alligator_jaw", "alligator_teeth", "alligator_lips",
                 "gator_upper", "gator_lower", "fractal_upper", "fractal_lower"}
         derived = {"stoch_rsi", "stoch_k_prev", "stoch_d_prev", "candle_pattern_dir",
-                   "candle_pattern_name", "bbi", "bb_mid_direction", "trend",
-                   "price_position", "mfi_direction", "rsi_dir_3bar"}
+                   "candle_pattern_name", "bbi", "bb_mid", "bb_mid_direction", "trend",
+                   "price_position", "mfi_direction", "rsi_dir_3bar"}   # v1.1: +bb_mid
         assert core <= INDICATOR_WHITELIST
         assert derived <= INDICATOR_WHITELIST
         assert len(INDICATOR_WHITELIST) == len(core) + len(derived)

@@ -103,11 +103,26 @@ class TestBackfillPaging:
 
 
 class TestCacheProvider:
-    def test_cache_is_utc_and_bar1_position(self, tmp_db):
+    """build_cache：DB 闭合序列 + forming bar 拼尾 + 指标 + 快照落库。"""
+
+    def test_cache_bar0_bar1_positions_and_utc(self, tmp_db):
+        from data import database as db
         client = FakeClient(n_bars=30)
-        cache = data_factory.build_cache(client, "M5", count=30)
+        data_factory.pull_timeframe(client, "M5", count=30, db_path=tmp_db)
+        cache = data_factory.build_cache(client, "M5", lookback=100, db_path=tmp_db)
         candles = cache["candles"]
-        assert len(candles) == 30
-        assert candles[-2].time == client.bars[-2]["time"] - SERVER_OFFSET   # bar1 UTC
-        assert candles[-1].time == client.bars[-1]["time"] - SERVER_OFFSET   # bar0 UTC
+        assert len(candles) == 30                    # 29 闭合 + 1 forming
+        assert candles[-2].time == client.bars[-2]["time"] - SERVER_OFFSET   # bar1
+        assert candles[-1].time == client.bars[-1]["time"] - SERVER_OFFSET   # bar0
         assert candles[0].time < candles[-1].time                             # 升序
+
+    def test_cache_indicators_and_snapshot(self, tmp_db):
+        from data import database as db
+        client = FakeClient(n_bars=30)
+        data_factory.pull_timeframe(client, "M5", count=30, db_path=tmp_db)
+        cache = data_factory.build_cache(client, "M5", lookback=100, db_path=tmp_db)
+        assert isinstance(cache["indicators"], dict) and cache["indicators"]
+        assert "rsi" in cache["indicators"]          # 指标引擎已接入
+        row = db.readonly_connect(tmp_db).execute(
+            "SELECT COUNT(*) FROM indicator_snapshots WHERE timeframe='M5'").fetchone()
+        assert row[0] > 0                            # 快照已落库

@@ -84,3 +84,13 @@ ATHLETE_MAX_TICKS = 3         # ticket 复核窗口（G15）
 FALLBACK_SL_ATR_MULT = 2.0    # 策略未给 SL 时的兜底
 FALLBACK_TP_ATR_MULT = 4.0
 MIN_CANDLES_FOR_SIGNAL = 10   # on_tick 最少 K 线守卫
+INDICATOR_LOOKBACK = 600      # 指标计算的闭合 bar 窗口（覆盖 ema_200）
+
+# ── 门禁配置（值域见 contract_risk §1；G12 参数在 RISK_PARAMS）──
+GLOBAL_DIRECTION_FILTER = "BOTH"      # BOTH | BUY_ONLY | SELL_ONLY（G13）
+MTF_RESONANCE_ENABLED = False         # G14 MTF 共振（M1 默认关，实现后开）
+NEWS_BIAS_BLOCK_ENABLED = False       # G2 新闻偏向封锁（数据源 M2 决策，默认关）
+NEWS_CALENDAR_PROVIDER = None         # G1 新闻日历提供者：callable(now)->窗口终点 UTC 秒；
+                                      # None = 未配置（放行并告警，非 fail-open——见 AGENTS §5.3 注）
+MARKET_SUN_OPEN_HOUR_UTC = 21         # G5 市场时段近似（broker 可改）
+MARKET_FRI_CLOSE_HOUR_UTC = 21

@@ -75,17 +75,39 @@ def backfill(client, timeframe: str, max_pages: int = 3,
     return stored
 
 
-def build_cache(client, timeframe: str, count: int = 300) -> dict:
-    """策略数据源（DataProvider 形状）：candles 升序，[-1]=bar0(forming)、[-2]=bar1。
+def build_cache(client, timeframe: str, lookback: int = 600,
+                db_path: str = settings.DB_PATH) -> dict:
+    """策略数据源（DataProvider 形状，T1.2 起含指标）。
 
-    indicators 由 M1 的本地指标引擎填充（T1.2）；M0 返回空表——
-    策略在 M0 不运行，缓存只供联调与展示。
+    - candles：闭合序列（来自 L1，UTC）+ 末尾拼上 forming bar（来自终端），
+      即 [-1]=bar0(forming，仅价格触发)、[-2]=bar1（INV-S1/契约 §7）。
+    - indicators：本地指标引擎的 bar1 值（engine/indicators.py），
+      并把快照写入 indicator_snapshots（供 get_indicator_series / M2 对齐）。
     """
-    rows = client.copy_rates(settings.SYMBOL, timeframe, count)
-    candles = [Candle(time=client.to_utc(r["time"]), open=r["open"], high=r["high"],
-                      low=r["low"], close=r["close"], volume=r["volume"])
-               for r in rows]              # 全链路 UTC（INV-S3）；末根 = bar0(forming)
-    return {"candles": candles, "indicators": {}}
+    import pandas as pd
+
+    from engine import indicators
+
+    rows = db.get_candles(timeframe, limit=lookback, db_path=db_path,
+                          order="DESC")[::-1]      # 最新 lookback 根，还原升序
+    if not rows:
+        return {"candles": [], "indicators": {}}
+    df = pd.DataFrame(rows).rename(columns={"timestamp": "time"})
+    indicators_kv = indicators.compute_bar1(df)
+
+    bar1_ts = int(df["time"].iloc[-1])
+    db.upsert_indicator_snapshots(timeframe, bar1_ts, indicators_kv, db_path=db_path)
+
+    candles = [Candle(time=int(r.time), open=float(r.open), high=float(r.high),
+                      low=float(r.low), close=float(r.close), volume=float(r.volume))
+               for r in df.itertuples()]
+    forming = client.copy_rates(settings.SYMBOL, timeframe, 1)
+    if forming:
+        f = forming[-1]
+        candles.append(Candle(time=client.to_utc(f["time"]), open=f["open"],
+                              high=f["high"], low=f["low"], close=f["close"],
+                              volume=f["volume"]))
+    return {"candles": candles, "indicators": indicators_kv}
 
 
 def sync_all(client, timeframes: Optional[list[str]] = None, count: int = 300,

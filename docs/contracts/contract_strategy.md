@@ -80,7 +80,7 @@ gator_upper, gator_lower,
 fractal_upper, fractal_lower
 ```
 
-补充键（旧库 TA-only 派生键，同样冻结）：`stoch_rsi`、`stoch_k_prev`、`stoch_d_prev`、`candle_pattern_dir`、`candle_pattern_name`、`bbi`、`bb_mid_direction`、`trend`、`price_position`、`mfi_direction`、`rsi_dir_3bar`。
+补充键（旧库 TA-only 派生键照搬，`bb_mid` 为 MT5 版新增 = BB 中轨 SMA20 单值）：`stoch_rsi`、`stoch_k_prev`、`stoch_d_prev`、`candle_pattern_dir`、`candle_pattern_name`、`bbi`、`bb_mid`、`bb_mid_direction`、`trend`、`price_position`、`mfi_direction`、`rsi_dir_3bar`。
 
 ## 5. 退出钩子签名（引擎 ↔ 策略）
 
@@ -115,3 +115,4 @@ fractal_upper, fractal_lower
 | 版本 | 日期 | 变更 |
 |------|------|------|
 | v1.0 | 2026-10-02 | 初版：自旧库 base.py v2 + 实盘审计结论重新表述 |
+| v1.1 | 2026-10-02 | 白名单补充键新增 `bb_mid`（BB 中轨单值；指标引擎实现时经三处同步登记） |

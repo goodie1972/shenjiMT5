@@ -35,10 +35,10 @@ INDICATOR_WHITELIST: frozenset[str] = frozenset({
     "alligator_jaw", "alligator_teeth", "alligator_lips",
     "gator_upper", "gator_lower",
     "fractal_upper", "fractal_lower",
-    # TA-only 派生键（旧库同款）
+    # TA-only 派生键（旧库同款；bb_mid 为 MT5 版新增，见 contract_strategy v1.1）
     "stoch_rsi", "stoch_k_prev", "stoch_d_prev",
     "candle_pattern_dir", "candle_pattern_name",
-    "bbi", "bb_mid_direction", "trend", "price_position",
+    "bbi", "bb_mid", "bb_mid_direction", "trend", "price_position",
     "mfi_direction", "rsi_dir_3bar",
 })
 

@@ -241,33 +241,84 @@ def g11_profit_exit_cooldown(ctx: dict) -> GateResult:
     return GateResult(False, "G11")
 
 
-# G1/G2（新闻）、G5（开市）、G12（K 线门禁）、G13（方向过滤）、G14（MTF）：
-# M1 任务 T1.4 接线。故意以"未接线即抛错"呈现——配合 fail-closed，
-# 任何在 M1 之前绕过它们的调用都会被拦截而不是放行。
-def _m1_stub(gate_id: str) -> GateFn:
-    def _gate(_ctx: dict) -> GateResult:
-        raise NotImplementedError(f"{gate_id} 未接线（M1 任务 T1.4）")
-    return _gate
+# ── 环境门禁（T1.4 接线完成；数据源经 ctx 注入，默认配置关闭即放行）──
+
+def g1_news_blackout(ctx: dict) -> GateResult:
+    """G1 新闻黑屏。ctx['news_blackout_until']：当前黑屏窗口终点（UTC 秒）或 None。
+
+    数据源 = settings.NEWS_CALENDAR_PROVIDER（引擎组装 ctx 时调用）；
+    None = 日历未配置 → 放行（配置态，非故障——引擎侧会告警，见 AGENTS §5.3）。
+    """
+    until = ctx.get("news_blackout_until")
+    now = ctx["now"]
+    if until and now < until:
+        return GateResult(True, "G1", f"新闻黑屏窗口（剩余 {(until - now) / 60:.0f}min）")
+    return GateResult(False, "G1")
+
+
+def g2_news_bias(ctx: dict) -> GateResult:
+    """G2 新闻偏向封锁。ctx['news_bias_block']：被封锁的方向（BUY/SELL）或 None。"""
+    block = ctx.get("news_bias_block")
+    if block and ctx.get("direction") == block:
+        return GateResult(True, "G2", f"News-Bias 预判与 {block} 相悖")
+    return GateResult(False, "G2")
+
+
+def g5_market_open(ctx: dict) -> GateResult:
+    """G5 市场时段（UTC 近似：周六全天休市、周日 21:00 开、周五 21:00 收）。"""
+    dt = settings.utc_dt(ctx["now"])
+    wd = dt.weekday()                     # Mon=0 .. Sun=6
+    if wd == 5:
+        return GateResult(True, "G5", "周六休市")
+    if wd == 6 and dt.hour < settings.MARKET_SUN_OPEN_HOUR_UTC:
+        return GateResult(True, "G5", "周日未开市")
+    if wd == 4 and dt.hour >= settings.MARKET_FRI_CLOSE_HOUR_UTC:
+        return GateResult(True, "G5", "周五已收市")
+    return GateResult(False, "G5")
+
+
+def g12_strategy_kline_gate(ctx: dict) -> GateResult:
+    """G12 K 线门禁（宿主 = 策略 calc_gate_state，引擎预计算放入 ctx）。"""
+    gate = ctx.get("strategy_gate") or {}
+    if gate.get("blocked"):
+        return GateResult(True, "G12", str(gate.get("reason", "")))
+    return GateResult(False, "G12")
+
+
+def g13_direction_filter(ctx: dict) -> GateResult:
+    f = settings.GLOBAL_DIRECTION_FILTER
+    if f in ("BUY_ONLY", "SELL_ONLY") and ctx.get("direction") != f.split("_")[0]:
+        return GateResult(True, "G13", f"{f} 模式拦截 {ctx.get('direction')}")
+    return GateResult(False, "G13")
+
+
+def g14_mtf_resonance(ctx: dict) -> GateResult:
+    if not settings.MTF_RESONANCE_ENABLED:
+        return GateResult(False, "G14")   # 配置关闭（实现后开启）
+    block = ctx.get("mtf_block")
+    if block and ctx.get("direction") == block:
+        return GateResult(True, "G14", "MTF 共振方向封锁")
+    return GateResult(False, "G14")
 
 
 # 有序表：账户/环境级 → 策略级。评估顺序即契约顺序，勿重排。
 GATES: list[GateFn] = [
-    g0_safety_lock,          # G0  急停
-    _m1_stub("G1"),          # G1  新闻黑屏（M1 接线）
-    _m1_stub("G2"),          # G2  新闻偏向封锁（M1 接线）
-    g3_global_daily_loss,    # G3  全局日亏硬停
+    g0_safety_lock,            # G0  急停
+    g1_news_blackout,          # G1  新闻黑屏（日历未配置=放行+告警）
+    g2_news_bias,              # G2  新闻偏向封锁（配置默认关）
+    g3_global_daily_loss,      # G3  全局日亏硬停
     g4_account_floating_loss,  # G4 账户级浮亏
-    _m1_stub("G5"),          # G5  市场开市（M1 接线）
-    g6_state_blocks,         # G6a/G6b 实亏封锁
-    g7_consecutive_loss,     # G7  连亏封锁
-    g8_rapid_exit,           # G8  急速出场封锁
-    g9_max_positions,        # G9  并发上限
-    g10_same_dir_float_loss, # G10 同向浮亏禁加仓
+    g5_market_open,            # G5  市场开市
+    g6_state_blocks,           # G6a/G6b 实亏封锁
+    g7_consecutive_loss,       # G7  连亏封锁
+    g8_rapid_exit,             # G8  急速出场封锁
+    g9_max_positions,          # G9  并发上限
+    g10_same_dir_float_loss,   # G10 同向浮亏禁加仓
     g11_profit_exit_cooldown,  # G11 盈利平仓同向冷却
-    _m1_stub("G12"),         # G12 K 线门禁（宿主在策略 calc_gate_state，M1 接线）
-    _m1_stub("G13"),         # G13 全局方向过滤（M1 接线）
-    _m1_stub("G14"),         # G14 MTF 共振（M1 接线）
-    # G15 = Athlete 3-tick 复核，属于执行轨，不在本表（engine/athlete.py）。
+    g12_strategy_kline_gate,   # G12 K 线门禁（宿主在策略）
+    g13_direction_filter,      # G13 全局方向过滤
+    g14_mtf_resonance,         # G14 MTF 共振（配置默认关）
+    # G15 = Athlete 3-tick 复核，属于执行轨，不在本表（engine/athlete.py，T1.3）。
 ]
 
 
