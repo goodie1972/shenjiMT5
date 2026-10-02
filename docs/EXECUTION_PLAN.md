@@ -58,10 +58,10 @@
 - [x] T1.4 `engine/risk/gatekeeper.py` 转正：G0~G15 有序评估 + `risk_states` 持久化/恢复 + fail-closed——G1（日历未配置=放行+告警）/G2（默认关）/G5（UTC 周末时段）/G13/G14 已接线；风控状态落 risk_states 表、重启恢复（含连亏计数/封锁位/急速窗口）
 - [x] T1.5 journal：`closed_trades.jsonl` append-only + signals 生命周期（pending→opened/voided→closed）——engine 管理的平仓当场写 journal（pnl=本地估计）；broker 侧平掉的仓位由出场巡检补记（mt5_history）
 - [x] T1.6 对账：启动 + 每 6h `history_deals_get` 按 position_id 聚合——已存在的 trades 行用 broker pnl/exit_price/exit_reason（DEAL_REASON_SL/TP→sl_triggered/tp_triggered）覆盖；缺失整条补录；在途仓位跳过
-- [ ] T1.7 `engine/paper_sim.py`（本地模拟器，仅测试注入用）——当前注入测试直接用 fake client 覆盖，视 T1.8 需要决定是否还需要独立模拟器
-- [ ] T1.8 注入测试清单全项落地（contract_risk.md §4：T-G0 ~ T-paper）——G0/G3/G4/G6/G7/G8/G9/G10/G11/G12/fail-closed 已有单测；待补：G0b 疑似快速平仓自动锁、T-paper 全量 demo 模式回归
-- [ ] T1.9 首个冒烟策略跑 demo 72h 不间断——管道已实机验证（连接→刷新→指标→门禁→入库），待挂后台长跑
-- [ ] T1.10 运维件：日志轮转、异常重启（脚本）、市场闭市静默
+- [x] T1.7 ~~`engine/paper_sim.py`~~ **决策：不建独立模拟器**（R2 范围纪律）——门禁/执行注入测试用 fake client 直接覆盖（test_athlete/test_engine），行为等价且少维护一个组件
+- [x] T1.8 注入测试清单落地（contract_risk.md §4）——T-G0/T-G0b（快速平仓自动锁）/T-G3/T-G4/T-G6a/T-G6b（含回正自动解除）/T-G7/T-G8/T-G9/T-G10/T-G11/T-fail/T-paper（引擎级无旁路：demo 模式 G9/G7 实测拦截）全绿；**T-G12 的位置门禁逻辑随 M2 策略移植实现**（管道已测）
+- [ ] T1.9 冒烟 72h——**已于 2026-10-02 21:06 启动**（`tools/supervise_engine.py` 监督，崩溃自动重启，日志 `logs/engine.log` 轮转）；验收 = 72h 无未处理异常 + 至少一笔真实 demo 单走完 开仓→复核→出场→journal→对账 全链
+- [x] T1.10 运维件：日志轮转（5MB×5）+ `supervise_engine.py` 崩溃重启（指数退避、上限 20 次）+ 闭市静默（G5 时段门禁 + 周末无新 bar 自然静默）
 
 ### 验收
 
@@ -134,4 +134,5 @@
 - 2026-10-02：**T0.4/T0.5 完成**——MT5 build 6231 + MetaQuotes-Demo 登录，probe 全项通过（对冲账户、digits=2、offset +3h、桶一致率 100%、real ticks 可用）；契约 §4/§8 回填实测值。
 - 2026-10-02：**M0 全部任务完成（T0.1~T0.10），验收四项全过，测试 59 例全绿**。数据：L1 8 个 TF 入库（H1 深 17 年）、L2 研究层 parquet + manifest、L3 清洗产物（0 异常）。
 - 2026-10-02：**M1 主体过半**（T1.1/T1.2/T1.4 主体完成，测试 80 例全绿）。指标引擎 44 键 + PENDING fail-closed；引擎实机冒烟通过（连接→桶检测→刷新→门禁→信号入库全链路，不下单）；修复 get_candles 最旧窗口 bug。
-- 2026-10-02：**T1.3/T1.4/T1.5/T1.6 完成，测试 91 例全绿**。Athlete（3-tick 复核/下单/去重/出场/journal）+ 风控状态持久化恢复 + deals 对账；实机再验证干净（清理了默认参数 bug 期间泄漏的 2 行测试 journal；trades 表补 pnl_source 迁移）。**M1 余项：T1.8 注入测试收尾 → T1.9 demo 72h 冒烟 → T1.10 运维件。**
+- 2026-10-02：**T1.3/T1.4/T1.5/T1.6 完成，测试 91 例全绿**。Athlete（3-tick 复核/下单/去重/出场/journal）+ 风控状态持久化恢复 + deals 对账；实机再验证干净（清理了默认参数 bug 期间泄漏的 2 行测试 journal；trades 表补 pnl_source 迁移）。
+- 2026-10-02：**M1 开发工作全部完成（测试 95 例全绿），T1.9 冒烟 72h 启动**。本轮补齐：G0b 快速平仓自动锁、G6b 盈利回正自动解除、T-paper 引擎级无旁路验证、日志轮转 + 崩溃重启监督器；T1.7 决策不建独立模拟器（fake client 已覆盖）。**等待：冒烟跑满 72h（预计 2026-10-05）→ M1 验收 → M2 FollowAve 移植。**

@@ -109,6 +109,8 @@ def fixed_now(monkeypatch):
 @pytest.fixture()
 def tmp_db(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "JOURNAL_DIR", str(tmp_path / "journal"))
+    # 隔离安全锁：G0b 测试会写锁文件，绝不能碰真实 config/safety_lock.txt
+    monkeypatch.setattr(settings, "SAFETY_LOCK_PATH", str(tmp_path / "safety_lock.txt"))
     path = str(tmp_path / "engine.db")
     db.init_db(path)
     return path
@@ -191,6 +193,47 @@ class TestSignalPipeline:
         engine2.start()
         engine2.stop()
         assert engine2.risk_states[661901].consecutive_losses == 2
+
+    def test_fast_close_auto_locks(self, tmp_db, fixed_now, tmp_path):
+        """T-G0b：持仓 <30s 亏损平仓 → 自动落安全锁（contract G0②）。"""
+        engine = make_engine(tmp_db)
+        engine.start()
+        engine.force_tick()                                   # 开仓（entry_ts=now）
+        engine.strategies[0].check_ema20_exit = lambda *a, **k: True
+        engine.force_tick()                                   # 立即平仓：hold=0s，pnl<0
+        engine.stop()
+        lock = tmp_path / "safety_lock.txt"
+        assert lock.exists()
+        assert "suspected fast close" in lock.read_text(encoding="utf-8")
+
+    def test_demo_mode_g9_blocks_second_signal(self, tmp_db, fixed_now):
+        """T-paper：demo 模式下 G9 并发=1 同样生效（无旁路）。"""
+        engine = make_engine(tmp_db)
+        engine.start()
+        engine.force_tick()                                   # 开仓（orders=[9001]）
+        engine.force_tick()                                   # 再出信号 → G9 拦截
+        engine.stop()
+        ro = db.readonly_connect(tmp_db)
+        rows = ro.execute("SELECT status, exit_reason FROM signals ORDER BY id").fetchall()
+        ro.close()
+        assert rows[0]["status"] == "opened"
+        assert rows[1]["status"] == "voided" and "G9" in rows[1]["exit_reason"]
+
+    def test_demo_mode_g7_consecutive_loss_blocks(self, tmp_db, fixed_now):
+        """T-paper：demo 模式下 G7 连亏封锁同样生效（状态经引擎路径评估）。"""
+        engine = make_engine(tmp_db)
+        engine.start()
+        state = engine.risk_states[661901]
+        for _ in range(3):
+            state.realized_pnl -= 1.0
+            from engine.risk import gatekeeper as gk
+            gk.register_trade_result(state, -1.0)
+        engine.force_tick()
+        engine.stop()
+        ro = db.readonly_connect(tmp_db)
+        row = ro.execute("SELECT status, exit_reason FROM signals").fetchone()
+        ro.close()
+        assert row["status"] == "voided" and "G7" in row["exit_reason"]
 
     def test_safety_lock_voids_signal(self, tmp_db, fixed_now, tmp_path, monkeypatch):
         engine = make_engine(tmp_db)

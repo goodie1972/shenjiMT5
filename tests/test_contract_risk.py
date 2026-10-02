@@ -126,6 +126,29 @@ class TestRealizedLoss:
         assert gk.check_realized_loss_pct(state, 0, 5.0) is False   # balance<=0 不误触发
 
 
+class TestG6bAutoLift:
+    """T-G6b 后半段：实亏 -$30 封锁后 PnL 回正 → 自动解除。"""
+
+    def _ctx(self, state, now=1_000_000.0, balance=10_000.0):
+        return {"risk_state": state, "now": now, "balance": balance,
+                "n_open_positions": 0}
+
+    def test_blocked_then_recovers(self):
+        state = _state()
+        state.realized_pnl = -31.0
+        r = gk.g6_state_blocks(self._ctx(state))
+        assert r.blocked and r.gate_id == "G6b"
+        assert state.realized_loss_amount_blocked is True
+        # 下一 tick 仍封锁（冷却期内、未回正）
+        r2 = gk.g6_state_blocks(self._ctx(state, now=1_000_100.0))
+        assert r2.blocked
+        # 回正 → 自动解除
+        state.realized_pnl = 5.0
+        r3 = gk.g6_state_blocks(self._ctx(state, now=1_000_200.0))
+        assert r3.blocked is False
+        assert state.realized_loss_amount_blocked is False
+
+
 class TestCooldownExpiry:
     def test_consecutive_cooldown_expiry(self):
         state = _state()

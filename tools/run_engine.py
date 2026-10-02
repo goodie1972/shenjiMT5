@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import logging.handlers
 import os
 import sys
 import time
@@ -21,10 +22,23 @@ from config import settings
 from core.mt5_client import MT5Client
 from engine.engine import Engine
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    datefmt="%H:%M:%S")
+
+def setup_logging(level=logging.INFO):
+    """T1.10：控制台 + 文件轮转（5MB × 5），长跑日志不撑爆磁盘。"""
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s",
+                            datefmt="%H:%M:%S")
+    root = logging.getLogger()
+    root.setLevel(level)
+    console = logging.StreamHandler()
+    console.setFormatter(fmt)
+    root.addHandler(console)
+    os.makedirs(settings.LOG_DIR, exist_ok=True)
+    file_h = logging.handlers.RotatingFileHandler(
+        os.path.join(settings.LOG_DIR, "engine.log"),
+        maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8")
+    file_h.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)s %(name)s %(message)s"))
+    root.addHandler(file_h)
 
 
 def main() -> int:
@@ -34,6 +48,8 @@ def main() -> int:
     parser.add_argument("--duration", type=int, default=0, help="运行秒数（0=常驻）")
     parser.add_argument("--mode", default="demo", choices=["demo"])
     args = parser.parse_args()
+
+    setup_logging()
 
     pool: dict[str, dict] = {}
     if args.smoke:

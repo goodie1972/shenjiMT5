@@ -294,6 +294,7 @@ class Engine:
             ticks = (exit_price - entry.entry_price) * sign / spec["trade_tick_size"]
             pnl_est = round(ticks * spec["trade_tick_value"] * volume, 2)
         now = int(settings.utc_now())
+        hold = now - entry.open_ts
         record = {"position_ticket": entry.position_ticket,
                   "strategy": entry.strategy_name, "magic": entry.magic,
                   "direction": entry.direction, "volume": volume,
@@ -301,12 +302,12 @@ class Engine:
                   "sl": entry.sl, "tp": entry.tp, "pnl": pnl_est,
                   "pnl_source": "local_est", "open_ts": entry.open_ts,
                   "close_ts": now,
-                  "hold_seconds": now - entry.open_ts,
+                  "hold_seconds": hold,
                   "exit_reason": reason, "mode": entry.mode, "source": "engine"}
         self.athlete.journal.append(record, db_path=self.db_path)
         if frac >= 1.0 or volume >= position["volume"]:
             self.athlete.open_entries.pop(entry.position_ticket, None)
-        self._register_exit_result(entry, pnl_est)
+        self._register_exit_result(entry, pnl_est, hold_seconds=hold)
         logger.info("[athlete] CLOSE %s %s vol=%.2f @ %.2f reason=%s pnl_est=%s",
                     entry.position_ticket, entry.direction, volume, exit_price,
                     reason, pnl_est)
@@ -325,12 +326,13 @@ class Engine:
              "hold_seconds": now - entry.open_ts, "exit_reason": "mt5_history",
              "mode": entry.mode, "source": "engine_gone"},
             db_path=self.db_path)
-        self._register_exit_result(entry, None)
+        self._register_exit_result(entry, None, hold_seconds=now - entry.open_ts)
         logger.info("[athlete] 仓位 %s 已被 broker 侧平掉（journal 补记，待对账）",
                     entry.position_ticket)
 
-    def _register_exit_result(self, entry, pnl_est: Optional[float]) -> None:
-        """风控状态突变：连亏计数、急速出场窗口、盈利平仓同向冷却。"""
+    def _register_exit_result(self, entry, pnl_est: Optional[float],
+                              hold_seconds: Optional[int] = None) -> None:
+        """风控状态突变：连亏计数、急速出场窗口、盈利平仓同向冷却、G0b 自动锁。"""
         state = self.risk_states.setdefault(
             entry.magic, gk.StrategyRiskState(name=entry.strategy_name, magic=entry.magic))
         pnl = pnl_est if pnl_est is not None else 0.0
@@ -339,7 +341,29 @@ class Engine:
         if pnl_est is not None and pnl_est > 0:
             self.profit_cooldown.setdefault(entry.magic, {})[entry.direction] = \
                 settings.utc_now() + settings.RISK_PARAMS["profit_exit_cooldown_hours"] * 3600
+        self._fast_close_auto_lock(entry, pnl_est, hold_seconds)
         self._save_risk_state(state)
+
+    def _fast_close_auto_lock(self, entry, pnl_est: Optional[float],
+                              hold_seconds: Optional[int]) -> None:
+        """G0b：持仓 < min_hold_seconds 且亏损平仓 → 疑似异常，自动落安全锁。
+
+        锁 = safety_lock 文件（G0 全局停开新仓），只能人工删除解锁。
+        """
+        import os
+        min_hold = settings.RISK_PARAMS["min_hold_seconds"]
+        if hold_seconds is None or pnl_est is None:
+            return
+        if hold_seconds < min_hold and pnl_est < 0:
+            lock = settings.SAFETY_LOCK_PATH
+            if not os.path.exists(lock):
+                os.makedirs(os.path.dirname(lock), exist_ok=True)
+                with open(lock, "w", encoding="utf-8") as f:
+                    f.write(f"auto: suspected fast close magic={entry.magic} "
+                            f"hold={hold_seconds}s pnl={pnl_est} "
+                            f"at {int(settings.utc_now())}\n")
+            logger.critical("[G0b] ⚠️ 疑似快速平仓（hold=%ss <%ss, pnl=%s）→ 已自动落锁 %s，"
+                            "人工确认后删除该文件解锁", hold_seconds, min_hold, pnl_est, lock)
 
     # ── 风控状态持久化（T1.4 余项）─────────────────────────
     def _save_risk_state(self, state: gk.StrategyRiskState) -> None:

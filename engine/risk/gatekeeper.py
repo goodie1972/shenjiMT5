@@ -183,10 +183,12 @@ def g6_state_blocks(ctx: dict) -> GateResult:
     if check_realized_loss_pct(state, balance, P["per_strategy_realized_loss_pct"]):
         mark_blocked(state, "realized_loss", now)
         return GateResult(True, "G6a", "实亏 ≥ 5% 余额，封锁 12h")
+    if state.realized_loss_amount_blocked and state.realized_pnl > 0:
+        state.realized_loss_amount_blocked = False    # 契约 G6b：PnL 回正自动解除
+        logger.info("[G6b] 实亏回正（pnl=%.2f），自动解除封锁", state.realized_pnl)
     if is_realized_loss_amount_blocked(state, now):
         return GateResult(True, "G6b", "实亏绝对额封锁中")
     if check_realized_loss_amount(state, P["per_strategy_realized_loss_amount"]):
-        # 盈利回正自动解除的语义：realized_pnl > 0 时 register_trade_result 后会清 blocked
         mark_blocked(state, "realized_loss_amount", now)
         return GateResult(True, "G6b", f"实亏 ≤ -${P['per_strategy_realized_loss_amount']:.0f}，封锁 12h")
     return GateResult(False, "G6")
