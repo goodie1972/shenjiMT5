@@ -1,0 +1,26 @@
+[project]
+name = "shenji-mt5"
+version = "0.1.0"
+description = "神机 XAUUSD MT5 版 — 三轨引擎（DataFactory → 策略员 → Athlete），与 MT4 版共享契约、不共享代码"
+requires-python = ">=3.10"
+# 注意：MetaTrader5 包仅支持 Windows + 64 位 Python，且终端需常驻；
+# 对最新 Python 版本的兼容性以 tools/probe_mt5.py 实测为准（T0.5）。
+dependencies = [
+    "MetaTrader5>=5.0.45; sys_platform == 'win32'",
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "pyarrow>=14.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+# 指标后端可选加速（Windows 需预装 TA-Lib 二进制；M0/M1 用 pandas 实现即可）
+ta = ["TA-Lib>=0.4.28"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

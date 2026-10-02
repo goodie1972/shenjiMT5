@@ -1,0 +1,28 @@
+# ── 运行时数据不入库（AGENTS.md Day1 规矩）──
+data/
+logs/
+tmp/
+config/safety_lock.txt
+
+# ── AI 会话产物不入库 ──
+.zcode/
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ── IDE / 系统 ──
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+.DS_Store
