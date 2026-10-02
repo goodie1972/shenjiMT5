@@ -93,9 +93,11 @@ class Athlete:
                 ok = False
             else:
                 try:
+                    # latest = 完整缓存（candles + indicators）——策略复核钩子可能需要
+                    # forming bar 实体方向（INV-S1.2 白名单内的价格/实体触发）
                     ok = ticket.strategy._verify_entry(
                         {"signal": ticket.direction, "indicator_values": latest},
-                        price, latest)
+                        price, cache)
                 except Exception:
                     logger.exception("[athlete] _verify_entry 异常（fail-closed）")
                     ok = False

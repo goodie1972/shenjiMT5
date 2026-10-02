@@ -17,7 +17,7 @@ from strategies.base import BaseStrategy
 
 logger = logging.getLogger(__name__)
 
-_EXCLUDED_FILES = {"__init__.py", "base.py", "scanner.py"}
+_EXCLUDED_FILES = {"__init__.py", "base.py", "scanner.py", "followave_core.py"}
 
 _lock = threading.RLock()
 _cache: dict[str, type[BaseStrategy]] = {}

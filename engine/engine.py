@@ -260,14 +260,23 @@ class Engine:
             strat = entry.strategy
             if strat is None:
                 continue
-            if strat.check_ema20_exit(p, tick["bid"], tick["ask"]):
+            view = self._position_view(p)      # 属性式视图（策略钩子契约）
+            if strat.check_ema20_exit(view, tick["bid"], tick["ask"]):
                 if self._close(entry, p, 1.0, "strategy_exit", tick):
                     closed += 1
                 continue
-            frac = strat.check_partial_exit(p, tick["bid"], tick["ask"])
+            frac = strat.check_partial_exit(view, tick["bid"], tick["ask"])
             if frac and frac > 0:
-                self._close(entry, p, frac, "partial_exit", tick)
+                self._close(entry, p, frac, "partial_tp", tick)
         return closed
+
+    @staticmethod
+    def _position_view(p: dict):
+        """把 client 的持仓 dict 包装成属性式视图（旧库 Position 形状，策略钩子契约）。"""
+        from types import SimpleNamespace
+        return SimpleNamespace(ticket=p["ticket"], order_type=p["type"],
+                               open_price=p["price_open"], volume=p["volume"],
+                               profit=p["profit"], magic=p["magic"])
 
     def _close(self, entry, position, frac: float, reason: str, tick) -> bool:
         spec = self.client.symbol_spec(settings.SYMBOL)
