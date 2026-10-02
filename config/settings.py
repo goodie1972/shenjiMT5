@@ -11,6 +11,8 @@ from datetime import datetime, timezone, timedelta
 
 # ── 品种与周期 ────────────────────────────────────────────────
 SYMBOL = "XAUUSD"
+LOT_SIZE = 0.01             # 默认下单手数（取 symbol spec volume_min/step 校验）
+DEVIATION = 30              # 最大滑点（points，下单/平仓共用）
 TIMEFRAMES = ["M1", "M5", "M15", "M30", "H1", "H4", "D1", "W1"]
 TF_SECONDS = {
     "M1": 60, "M5": 300, "M15": 900, "M30": 1800,

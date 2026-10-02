@@ -21,10 +21,14 @@ from typing import Callable, Optional
 from config import settings
 from config.settings import TF_SECONDS
 from data import database as db
-from engine import data_factory
+from engine import data_factory, reconcile as reconcile_mod
+from engine.athlete import Athlete
+from engine.journal import TradeJournal
 from engine.risk import gatekeeper as gk
 
 logger = logging.getLogger(__name__)
+
+RECONCILE_INTERVAL_SEC = 6 * 3600
 
 
 class Engine:
@@ -51,10 +55,13 @@ class Engine:
         self.profit_cooldown: dict[int, dict[str, float]] = {}   # magic → dir → until
         self.strategies: list = []
         self.executor = ThreadPoolExecutor(max_workers=settings.STRATEGY_WORKERS)
+        self.athlete = Athlete(client, TradeJournal(), db_path=db_path, mode=mode)
+        self._last_reconcile = 0.0
         self._stop = False
 
     # ── 生命周期 ─────────────────────────────────────────────
     def start(self) -> None:
+        db.init_db(self.db_path)             # 幂等：建表 + 轻量迁移
         self.client.connect()
         info = self.client.account_summary()
         logger.info("[engine] mode=%s login=%s server=%s balance=%.2f margin_mode=%s",
@@ -72,6 +79,8 @@ class Engine:
         for s in self.strategies:
             self.risk_states.setdefault(
                 s.magic, gk.StrategyRiskState(name=s.name, magic=s.magic))
+        self._load_risk_states()
+        self._run_reconcile()
         logger.info("[engine] started: strategies=%s tfs=%s offsets=%s",
                     [s.name for s in self.strategies], sorted(self.caches),
                     self.tf_offsets)
@@ -86,6 +95,8 @@ class Engine:
             try:
                 self.client.maybe_recalibrate()
                 self.tick()
+                if settings.utc_now() - self._last_reconcile > RECONCILE_INTERVAL_SEC:
+                    self._run_reconcile()
             except Exception:
                 logger.exception("[engine] tick 异常（fail-safe：下个 tick 继续）")
             self._sleep(self.poll_seconds)
@@ -121,8 +132,9 @@ class Engine:
             self.client, tf, settings.INDICATOR_LOOKBACK, self.db_path)
 
     def tick(self) -> dict:
-        """一个轮询周期：bar 闭合刷新 → 策略扫描 → 门禁 → 信号入库。"""
-        stats: dict = {"refreshed": [], "signals": 0, "blocked": 0, "passed": 0}
+        """一个轮询周期：bar 闭合刷新 → 策略扫描 → 门禁 → Athlete → 出场管理。"""
+        stats: dict = {"refreshed": [], "signals": 0, "blocked": 0, "passed": 0,
+                       "opened": 0, "closed": 0}
         for tf in sorted({c["timeframe"] for c in self.pool.values()}):
             if self._bar_advanced(tf):
                 self.refresh_tf(tf)
@@ -132,16 +144,21 @@ class Engine:
             futures = [self.executor.submit(self._process_strategy, s) for s in affected]
             for f in futures:
                 f.result(timeout=60)
+        stats["opened"] = len(self.athlete.verify_tick(self.caches))
+        stats["closed"] = self._manage_exits()
         return stats
 
     def force_tick(self) -> dict:
         """测试辅助：无视桶边界强制刷新 + 全策略扫描（仅本 tick，不影响判定纪律）。"""
         for tf in self.caches:
             self.refresh_tf(tf)
-        stats = {"refreshed": list(self.caches), "signals": 0, "blocked": 0, "passed": 0}
+        stats = {"refreshed": list(self.caches), "signals": 0, "blocked": 0,
+                 "passed": 0, "opened": 0, "closed": 0}
         futures = [self.executor.submit(self._process_strategy, s) for s in self.strategies]
         for f in futures:
             f.result(timeout=60)
+        stats["opened"] = len(self.athlete.verify_tick(self.caches))
+        stats["closed"] = self._manage_exits()
         return stats
 
     def _provide(self, tf: str, count: int) -> dict:
@@ -222,7 +239,157 @@ class Engine:
                                     db_path=self.db_path)
             logger.info("[engine] #%d 拦截 %s %s", signal_id, result.gate_id, result.reason)
         else:
-            logger.info("[engine] #%d 全门禁放行 → Athlete（T1.3 接管下单）", signal_id)
+            ticket = self.athlete.submit(strategy, signal_id, direction, sig)
+            if ticket:
+                logger.info("[engine] #%d 放行 → Athlete（G15 复核）", signal_id)
+
+    # ── 轨道3：出场管理 + journal + 风控状态突变 ────────────
+    def _manage_exits(self) -> int:
+        if not self.athlete.open_entries:
+            return 0
+        positions = self.client.positions_open(settings.SYMBOL)
+        live = {p["ticket"]: p for p in positions}
+        tick = self.client.get_tick(settings.SYMBOL)
+        closed = 0
+        for ticket_id, entry in list(self.athlete.open_entries.items()):
+            p = live.get(ticket_id)
+            if p is None:
+                # 仓位已不在（SL/TP 触发或手动平）→ journal 补记，真值待对账覆盖
+                self._on_position_gone(entry)
+                continue
+            strat = entry.strategy
+            if strat is None:
+                continue
+            if strat.check_ema20_exit(p, tick["bid"], tick["ask"]):
+                if self._close(entry, p, 1.0, "strategy_exit", tick):
+                    closed += 1
+                continue
+            frac = strat.check_partial_exit(p, tick["bid"], tick["ask"])
+            if frac and frac > 0:
+                self._close(entry, p, frac, "partial_exit", tick)
+        return closed
+
+    def _close(self, entry, position, frac: float, reason: str, tick) -> bool:
+        spec = self.client.symbol_spec(settings.SYMBOL)
+        if frac >= 1.0:
+            volume = position["volume"]
+        else:
+            volume = round(position["volume"] * frac / spec["volume_step"]) * spec["volume_step"]
+            if volume < spec["volume_min"] or position["volume"] - volume < spec["volume_min"]:
+                logger.info("[athlete] %s 部分平仓量不足最小手，跳过（旧库纪律）",
+                            entry.position_ticket)
+                return False
+        try:
+            result = self.client.close_position(
+                settings.SYMBOL, entry.position_ticket, entry.direction,
+                volume, magic=entry.magic)
+        except Exception:
+            logger.exception("[athlete] 平仓失败 ticket=%s（下 tick 重试）",
+                             entry.position_ticket)
+            return False
+        exit_price = result["price"]
+        sign = 1.0 if entry.direction == "BUY" else -1.0
+        pnl_est = None
+        if entry.entry_price and spec["trade_tick_size"]:
+            ticks = (exit_price - entry.entry_price) * sign / spec["trade_tick_size"]
+            pnl_est = round(ticks * spec["trade_tick_value"] * volume, 2)
+        now = int(settings.utc_now())
+        record = {"position_ticket": entry.position_ticket,
+                  "strategy": entry.strategy_name, "magic": entry.magic,
+                  "direction": entry.direction, "volume": volume,
+                  "entry_price": entry.entry_price, "exit_price": exit_price,
+                  "sl": entry.sl, "tp": entry.tp, "pnl": pnl_est,
+                  "pnl_source": "local_est", "open_ts": entry.open_ts,
+                  "close_ts": now,
+                  "hold_seconds": now - entry.open_ts,
+                  "exit_reason": reason, "mode": entry.mode, "source": "engine"}
+        self.athlete.journal.append(record, db_path=self.db_path)
+        if frac >= 1.0 or volume >= position["volume"]:
+            self.athlete.open_entries.pop(entry.position_ticket, None)
+        self._register_exit_result(entry, pnl_est)
+        logger.info("[athlete] CLOSE %s %s vol=%.2f @ %.2f reason=%s pnl_est=%s",
+                    entry.position_ticket, entry.direction, volume, exit_price,
+                    reason, pnl_est)
+        return True
+
+    def _on_position_gone(self, entry) -> None:
+        """在管仓位被 broker 侧平掉（SL/TP/手动）：journal 补记，pnl 标 None 待对账。"""
+        self.athlete.open_entries.pop(entry.position_ticket, None)
+        now = int(settings.utc_now())
+        self.athlete.journal.append(
+            {"position_ticket": entry.position_ticket, "strategy": entry.strategy_name,
+             "magic": entry.magic, "direction": entry.direction,
+             "volume": entry.volume, "entry_price": entry.entry_price,
+             "exit_price": None, "sl": entry.sl, "tp": entry.tp, "pnl": None,
+             "pnl_source": None, "open_ts": entry.open_ts, "close_ts": now,
+             "hold_seconds": now - entry.open_ts, "exit_reason": "mt5_history",
+             "mode": entry.mode, "source": "engine_gone"},
+            db_path=self.db_path)
+        self._register_exit_result(entry, None)
+        logger.info("[athlete] 仓位 %s 已被 broker 侧平掉（journal 补记，待对账）",
+                    entry.position_ticket)
+
+    def _register_exit_result(self, entry, pnl_est: Optional[float]) -> None:
+        """风控状态突变：连亏计数、急速出场窗口、盈利平仓同向冷却。"""
+        state = self.risk_states.setdefault(
+            entry.magic, gk.StrategyRiskState(name=entry.strategy_name, magic=entry.magic))
+        pnl = pnl_est if pnl_est is not None else 0.0
+        gk.register_trade_result(state, pnl)      # pnl None 按 0（不计数不清零）
+        gk.record_exit(state, settings.utc_now())
+        if pnl_est is not None and pnl_est > 0:
+            self.profit_cooldown.setdefault(entry.magic, {})[entry.direction] = \
+                settings.utc_now() + settings.RISK_PARAMS["profit_exit_cooldown_hours"] * 3600
+        self._save_risk_state(state)
+
+    # ── 风控状态持久化（T1.4 余项）─────────────────────────
+    def _save_risk_state(self, state: gk.StrategyRiskState) -> None:
+        import json
+        data = {k: (list(v) if k == "exit_timestamps" else v)
+                for k, v in state.__dict__.items()}
+        conn = db.connect(self.db_path)
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO risk_states (magic, state_json, updated_ts)"
+                " VALUES (?,?,?)",
+                (state.magic, json.dumps(data), int(settings.utc_now())))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _load_risk_states(self) -> None:
+        import json
+        try:
+            ro = db.readonly_connect(self.db_path)
+            rows = ro.execute("SELECT magic, state_json FROM risk_states").fetchall()
+            ro.close()
+        except Exception:
+            return
+        for magic, state_json in rows:
+            data = json.loads(state_json)
+            state = gk.StrategyRiskState(
+                name=data.get("name", f"magic:{magic}"), magic=int(magic),
+                realized_pnl=data.get("realized_pnl", 0.0),
+                consecutive_losses=data.get("consecutive_losses", 0),
+                realized_loss_blocked=data.get("realized_loss_blocked", False),
+                realized_loss_blocked_at=data.get("realized_loss_blocked_at", 0.0),
+                realized_loss_amount_blocked=data.get("realized_loss_amount_blocked", False),
+                realized_loss_amount_blocked_at=data.get("realized_loss_amount_blocked_at", 0.0),
+                consecutive_loss_blocked=data.get("consecutive_loss_blocked", False),
+                consecutive_loss_blocked_at=data.get("consecutive_loss_blocked_at", 0.0),
+                rapid_exit_blocked=data.get("rapid_exit_blocked", False),
+                rapid_exit_blocked_at=data.get("rapid_exit_blocked_at", 0.0))
+            state.exit_timestamps.clear()
+            state.exit_timestamps.extend(data.get("exit_timestamps", []))
+            self.risk_states[int(magic)] = state
+        if rows:
+            logger.info("[engine] risk_states 恢复: %s 个策略", len(rows))
+
+    def _run_reconcile(self) -> None:
+        try:
+            reconcile_mod.reconcile(self.client, db_path=self.db_path)
+            self._last_reconcile = settings.utc_now()
+        except Exception:
+            logger.exception("[engine] 对账失败（下个周期重试）")
 
     def _news_bias_block(self) -> Optional[str]:
         if not settings.NEWS_BIAS_BLOCK_ENABLED or not self.bias_provider:

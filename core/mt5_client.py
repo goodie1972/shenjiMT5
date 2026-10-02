@@ -262,6 +262,39 @@ class MT5Client:
                  "profit": float(p.profit), "time": int(p.time)}
                 for p in pos]
 
+    def close_position(self, symbol: str, position_ticket: int, direction: str,
+                       volume: float, magic: int = 0,
+                       deviation: int = settings.DEVIATION) -> dict:
+        """市价平仓（对冲账户按 position 定向平）。direction = 持仓方向。"""
+        self.ensure_connected()
+        mt5 = self._mt5
+        spec = self.symbol_spec(symbol)
+        filling = select_filling(spec["filling_mode_mask"])
+        tick = self.get_tick(symbol)
+        is_buy_position = direction.upper() == "BUY"
+        request = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": symbol,
+            "position": int(position_ticket),
+            "volume": float(volume),
+            "type": mt5.ORDER_TYPE_SELL if is_buy_position else mt5.ORDER_TYPE_BUY,
+            "price": tick["bid"] if is_buy_position else tick["ask"],
+            "deviation": int(deviation),
+            "magic": int(magic),
+            "comment": "shenji:close",
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": getattr(mt5, f"ORDER_FILLING_{filling}"),
+        }
+        result = mt5.order_send(request)
+        if result is None:
+            raise MT5Error(f"平仓返回 None: {mt5.last_error()}")
+        retcodes_ok = {mt5.TRADE_RETCODE_DONE, mt5.TRADE_RETCODE_DONE_PARTIAL,
+                       mt5.TRADE_RETCODE_PLACED}
+        if result.retcode not in retcodes_ok:
+            raise MT5Error(f"平仓被拒 retcode={result.retcode} comment={result.comment}")
+        return {"deal_ticket": result.deal, "price": result.price,
+                "volume": result.volume, "retcode": result.retcode, "filling": filling}
+
     # ── 成交流水（对账）───────────────────────────────────────
     def deals_history(self, from_ts_utc: float, to_ts_utc: float) -> list[dict]:
         """拉区间内全部 deals；对账按 position_id 聚合（contract_strategy §7.1）。"""
@@ -275,7 +308,7 @@ class MT5Client:
             "type": int(d.type), "entry": int(d.entry), "volume": d.volume,
             "price": d.price, "profit": d.profit, "commission": d.commission,
             "swap": d.swap, "magic": d.magic, "comment": d.comment,
-            "time": int(d.time),
+            "reason": int(d.reason), "time": int(d.time),
         } for d in deals]
 
     # ── 时区（D1）────────────────────────────────────────────
