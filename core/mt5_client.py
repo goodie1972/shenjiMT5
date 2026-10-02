@@ -38,17 +38,44 @@ def _load_mt5():
     return mt5
 
 
+# copy_rates_from_pos 单次请求根数上限（实测：≥100000 返回 Invalid params，
+# 2026-10-02 build 6231 / MetaQuotes-Demo）。深历史用 start_pos 分页。
+MAX_COPY_COUNT = 99_999
+
+
 class MT5Error(RuntimeError):
     """终端不可达 / 调用失败。"""
 
 
+# filling_mode 掩码位（MQL5 SYMBOL_FILLING_MODE）
+FILLING_FOK, FILLING_IOC, FILLING_RETURN = 1, 2, 4
+
+
+def select_filling(mask: int) -> str:
+    """按 symbol filling 掩码自适应选填充策略：FOK → IOC → RETURN。
+
+    纯函数（D6）；掩码不含任何支持位 = spec 异常，抛错拒绝下单（fail-closed）。
+    """
+    if mask & FILLING_FOK:
+        return "FOK"
+    if mask & FILLING_IOC:
+        return "IOC"
+    if mask & FILLING_RETURN:
+        return "RETURN"
+    raise MT5Error(f"symbol 未声明任何可用的 filling mode（掩码={mask}），拒绝下单")
+
+
 class MT5Client:
-    """连接管理、symbol spec、行情读取、成交流水。M1 再加下单包装。"""
+    """连接管理、symbol spec、行情读取、下单、成交流水。
+
+    测试注入：`mt5_module=` 传 fake 模块即可脱离终端跑单测。
+    """
 
     def __init__(self, terminal_path: str = "", login: int = 0,
-                 password: str = "", server: str = ""):
-        self._mt5 = None
-        self._initialized = False
+                 password: str = "", server: str = "", mt5_module=None):
+        self._mt5 = mt5_module
+        self._external_mt5 = mt5_module is not None
+        self._initialized = mt5_module is not None   # 注入 fake 视为已连接
         self._terminal_path = terminal_path
         self._login = login
         self._password = password
@@ -61,8 +88,9 @@ class MT5Client:
     # ── 连接 ─────────────────────────────────────────────────
     def connect(self) -> dict:
         """初始化终端连接。已在运行的终端直接挂载；否则按需指定路径/账号。"""
-        mt5 = _load_mt5()
-        self._mt5 = mt5
+        if not self._external_mt5:
+            self._mt5 = _load_mt5()
+        mt5 = self._mt5
         kwargs: dict[str, Any] = {}
         if self._terminal_path:
             kwargs["path"] = self._terminal_path
@@ -151,18 +179,22 @@ class MT5Client:
         return {"time": t.time, "bid": t.bid, "ask": t.ask,
                 "last": t.last, "volume": t.volume}
 
-    def copy_rates(self, symbol: str, timeframe: str, count: int) -> list[dict]:
+    def copy_rates(self, symbol: str, timeframe: str, count: int,
+                   start_pos: int = 0) -> list[dict]:
         """拉 K 线，升序返回；**末根是 forming bar（bar0）**，bar1 = [-2]（INV-S1）。
 
         返回 dict 键：time(server 秒)/open/high/low/close/tick_volume。
         入库前必须经 to_utc() 转换（contract_data §2）。
+        start_pos：起始位置（0=最新 forming bar），深历史分页用。
         """
         self.ensure_connected()
+        if not 0 < count <= MAX_COPY_COUNT:
+            raise MT5Error(f"count 必须在 1~{MAX_COPY_COUNT}（实测上限），分页请用 start_pos")
         mt5 = self._mt5
         tf = getattr(mt5, f"TIMEFRAME_{timeframe}", None)
         if tf is None:
             raise MT5Error(f"未知周期: {timeframe}")
-        rates = mt5.copy_rates_from_pos(symbol, tf, 0, count)
+        rates = mt5.copy_rates_from_pos(symbol, tf, start_pos, count)
         if rates is None:
             raise MT5Error(f"copy_rates_from_pos({symbol},{timeframe}) 失败: {mt5.last_error()}")
         return [
@@ -180,6 +212,42 @@ class MT5Client:
             raise MT5Error(f"copy_ticks_range 失败: {mt5.last_error()}")
         return [{"time": int(t["time"]), "bid": float(t["bid"]), "ask": float(t["ask"])}
                 for t in ticks]
+
+    # ── 下单（D6：filling 自适应；门禁在 GateKeeper，此处不做任何资力判断）──
+    def order_send(self, symbol: str, direction: str, volume: float,
+                   sl: Optional[float] = None, tp: Optional[float] = None,
+                   deviation: int = 30, magic: int = 0, comment: str = "") -> dict:
+        """市价开仓。direction ∈ BUY/SELL；价格取当前 ask/bid。"""
+        self.ensure_connected()
+        mt5 = self._mt5
+        spec = self.symbol_spec(symbol)
+        filling = select_filling(spec["filling_mode_mask"])
+        tick = self.get_tick(symbol)
+        is_buy = direction.upper() == "BUY"
+        request = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": symbol,
+            "volume": float(volume),
+            "type": mt5.ORDER_TYPE_BUY if is_buy else mt5.ORDER_TYPE_SELL,
+            "price": tick["ask"] if is_buy else tick["bid"],
+            "sl": float(sl) if sl else 0.0,
+            "tp": float(tp) if tp else 0.0,
+            "deviation": int(deviation),
+            "magic": int(magic),
+            "comment": comment,
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": getattr(mt5, f"ORDER_FILLING_{filling}"),
+        }
+        result = mt5.order_send(request)
+        if result is None:
+            raise MT5Error(f"order_send 返回 None: {mt5.last_error()}")
+        retcodes_ok = {mt5.TRADE_RETCODE_DONE, mt5.TRADE_RETCODE_DONE_PARTIAL,
+                       mt5.TRADE_RETCODE_PLACED}
+        if result.retcode not in retcodes_ok:
+            raise MT5Error(f"下单被拒 retcode={result.retcode} comment={result.comment}")
+        return {"order_ticket": result.order, "deal_ticket": result.deal,
+                "price": result.price, "volume": result.volume,
+                "retcode": result.retcode, "filling": filling}
 
     # ── 成交流水（对账）───────────────────────────────────────
     def deals_history(self, from_ts_utc: float, to_ts_utc: float) -> list[dict]:

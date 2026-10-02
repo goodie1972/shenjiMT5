@@ -29,18 +29,20 @@
 - [x] T0.5 跑 probe：账户模式（净持/对冲）、symbol spec（digits/point/filling/stops）、server offset、M1~D1 rates 可用性、ticks 可用性 → `docs/probe/mt5_probe_report.md`
       **2026-10-02 全部通过**：对冲账户；XAUUSD digits=2/pip=0.01 与旧库惯例一致；server offset +3.00h；全 TF 桶一致率 100%（UTC 域 H4 桶=3600s，同旧库形态）；real ticks 近 6h 9.2 万条（M2 验证层可用）；deals 可读。契约 §4/§8 已回填实测值。
 - [ ] T0.5 跑 probe：账户模式（净持/对冲）、symbol spec（digits/point/filling/stops）、server offset、M1~D1 rates 可用性、ticks 可用性 → `docs/probe/mt5_probe_report.md`
-- [ ] T0.6 `core/mt5_client.py` 转正：offset 校准循环、symbol spec 缓存、下单包装（filling 自适应）通过单测（mock API）
-- [ ] T0.7 数据入库：`engine/data_factory.py` 拉 M1/M5/M15/M30/H1/H4/D1 → to_utc → upsert `ohlcv`；历史回填（terminal 可给的最大范围）
-- [ ] T0.8 `tools/export_ohlcv_parquet.py` 产出 L2 研究层 + manifest
-- [ ] T0.9 `tools/clean_ohlcv.py` 移植三规则，产出 L3；桶偏移众数探测报告回填契约 §4/§8
-- [ ] T0.10 `docs/probe/` 巡检惯例建立（每次 M0/M1 会话先跑 probe）
+- [x] T0.6 `core/mt5_client.py` 转正：offset 校准循环、symbol spec 缓存、下单包装（filling 自适应）通过单测（mock API）——注入式 fake MT5 模块 + `select_filling` 纯函数 + `order_send`（retcode/fail-closed 校验）
+- [x] T0.7 数据入库：`engine/data_factory.py` 拉 M1..W1 → to_utc → upsert `ohlcv`；历史回填（terminal 可给的最大范围）
+      **实测坑（已固化）**：`copy_rates_from_pos` 单次 ≥100000 根返回 Invalid params → 上限 99999 + `start_pos` 分页回填（`backfill(max_pages=3)`）。入库量：M1 10 万根（~3.5 个月）/ M5 10 万（~1.4 年）/ M15 10 万（~4 年）/ M30 10 万（~8.5 年）/ **H1 10 万（~17 年，2009 起）**/ H4 34179（2004 起）/ D1 5732 / W1 1164。UTC 域桶偏移复验：全 TF 一致率 100%（H4=3600s、D1=75600s）。想加深深度的 M1：终端 设置→图表→最大柱数 调大后重跑 `tools/ingest_ohlcv.py`。
+- [x] T0.8 `tools/export_ohlcv_parquet.py` 产出 L2 研究层 + manifest（sha256 校验、六列契约、dedupe/sort/validate；读回验证通过）
+- [x] T0.9 `tools/clean_ohlcv.py` 移植三规则，产出 L3；桶偏移众数探测报告回填契约 §4/§8
+      **实测结论**：真实数据 0 ghost / 0 重建 / 0 补洞（clean）；新增"闭合桶"约束——右端未闭合桶不评估不补洞（never fabricate；首跑曾把 forming 桶误报为 1 重建 + 1 补洞，已修）。L3 = `ohlcv_clean` 表 + `data/clean/` parquet，评估逻辑抽 `assess_tf` 纯函数带 7 个单测。
+- [x] T0.10 `docs/probe/` 巡检惯例建立（每次 M0/M1 会话先跑 probe）→ 已写入 AGENTS.md §7.4
 
-### 验收
+### 验收（2026-10-02 全部达成 ✅）
 
-1. `pytest tests/test_contract_data.py` 全绿（schema/UTC 约定/只读工具/PK 幂等）。
-2. probe 报告存在且回答了 PRD 的四个 MT5 地雷（R4~R7）。
-3. `ohlcv` 各 TF 行数、起止时间、桶偏移一致率 ≥95%（探测法）。
-4. 数据契约 §4/§8 回填实测值，标记"定稿"。
+1. `pytest tests/` 全绿（59 例，含 test_contract_data 全部 schema/UTC/只读/PK 用例）。
+2. probe 报告存在且回答了 PRD 的四个 MT5 地雷（R4 对冲、R5 digits=2、R6 offset +3h、R7 环境就绪）。
+3. `ohlcv` 各 TF 行数、起止时间、桶偏移一致率 100%（≥95% 达标）。
+4. 数据契约 v1.1 §4/§8 回填实测值，标记"M0 定稿"。
 
 ---
 
@@ -129,4 +131,5 @@
 ## 当前进度
 
 - 2026-10-02：PRD/架构/三契约/执行计划 v1.0 定稿；骨架 + 契约测试（37 例全绿）+ probe 脚本提交。
-- 2026-10-02：**T0.4/T0.5 完成**——MT5 build 6231 + MetaQuotes-Demo 登录，probe 全项通过（对冲账户、digits=2、offset +3h、桶一致率 100%、real ticks 可用）；契约 §4/§8 回填实测值。**下一步：T0.6 mt5_client 转正 → T0.7 数据入库 → T0.8/0.9 研究层与清洗。**
+- 2026-10-02：**T0.4/T0.5 完成**——MT5 build 6231 + MetaQuotes-Demo 登录，probe 全项通过（对冲账户、digits=2、offset +3h、桶一致率 100%、real ticks 可用）；契约 §4/§8 回填实测值。
+- 2026-10-02：**M0 全部任务完成（T0.1~T0.10），验收四项全过，测试 59 例全绿**。数据：L1 8 个 TF 入库（H1 深 17 年）、L2 研究层 parquet + manifest、L3 清洗产物（0 异常）。**下一步：进入 M1（T1.1 三轨主循环起步）**；M1 下单前需开启终端"算法交易"按钮。

@@ -1,7 +1,7 @@
 # 契约二：数据契约（contract_data）
 
-- 版本：v1.0（2026-10-02）
-- 状态：M0 定稿目标（桶偏移与 symbol spec 两节待 probe 实测后回填实测值）
+- 版本：v1.1（2026-10-02）
+- 状态：**M0 定稿**（§4/§8 已回填 MetaQuotes-Demo 实测值；切换 broker 时重探并追加快照）
 - 变更流程：改本文件必须同步改 `tests/test_contract_data.py` 与实现（`data/database.py`、`tools/export_ohlcv_parquet.py`、`tools/clean_ohlcv.py`），版本号 +1。
 - 血统：ohlcv schema 与只读分层继承旧库 `data/database.py` + `AGENTS.md` §2/§5 + 清洗工具 v2 实践；**时间戳语义换掉**（旧库存 MT4 server time，新库存 UTC——这是本次迁移最大的语义修正）。
 
@@ -123,3 +123,4 @@ CREATE TABLE ohlcv (
 | 版本 | 日期 | 变更 |
 |------|------|------|
 | v1.0 | 2026-10-02 | 初版：时间戳改 UTC；分层/清洗/研究层契约继承旧库；§4/§8 留待 probe 实测回填 |
+| v1.1 | 2026-10-02 | §4/§8 回填 MetaQuotes-Demo 实测值；新增实测快照表与桶偏移换算结论；标记 M0 定稿 |
