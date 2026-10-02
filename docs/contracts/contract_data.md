@@ -57,7 +57,7 @@ CREATE TABLE ohlcv (
 - 公式：`bucket = ((ts_utc − OFFSET) // step) * step + OFFSET`，禁止裸 `(ts // step) * step`。
 - `OFFSET` = broker 日线开市时刻相对 00:00 UTC 的偏移（秒）。**每个经纪商不同，且可能随 DST 变化**——永远探测，不写常量。
 - 探测法（照搬旧库 `detect_offset`）：对已入库 bar 序列取 `mode(ts % step)`，一致率 < 95% 时告警并重新探测。
-- M0 交付：probe 报告回填本 broker 的 M1/H1/H4 实测桶起点。
+- **M0 实测（2026-10-02，MetaQuotes-Demo，server offset = +3.00h 整）**：server-time 域内 M1/M5/M15/M30/H1/H4/D1 全部 `桶偏移=0`、一致率 100%（broker 按服务器整点对齐 K 线）。换算到 UTC 存储域：`OFFSET_utc = (−server_offset) mod step`，即 H1=0s、**H4=3600s（UTC 桶起点 01:00/05:00/09:00/13:00/17:00/21:00）**——与旧库 MT4 的 H4 形态巧合一致（两者同为 UTC+3 服务器），但这是探测结果、不是常量；**切换 broker（Dukascopy MT5）后必须重探**。详见 `docs/probe/mt5_probe_report.md`。
 - 自建高周期桶（如 H2 合成）只允许用覆盖完整周期的桶，禁止 fabricate（旧库 ghost bar 教训，见 §6）。
 
 ## 5. 研究层 parquet（L2，继承旧库六列契约）
@@ -101,6 +101,20 @@ CREATE TABLE ohlcv (
 | `filling_mode` 掩码 | 下单填充策略自适应（D6） |
 | `stops_level` / `freeze_level` | SL/TP 最小距离校验 |
 | `trade_mode` | 是否允许交易（demo/实盘差异探测） |
+
+**M0 实测快照（2026-10-02，MetaQuotes-Demo #113526190）**：
+
+| 字段 | 实测值 | 解读 |
+|------|--------|------|
+| digits / point | 2 / 0.01 | 与旧库 2 位报价惯例一致，pip_size=0.01 |
+| tick_value / tick_size | 0.1 / 0.01 | 0.01 lot 每跳 $0.001…注意 PnL 换算用 tick_value 而非旧库 "$1/点" 硬编码 |
+| volume min/step/max | 0.01 / 0.01 / 100 | 手数合法域 |
+| stops_level / freeze_level | 0 / 0 | 无最小距离限制（MetaQuotes demo 宽松；真 broker 可能非 0） |
+| filling_mode 掩码 | 3 | FOK(1) + IOC(2) 允许，RETURN 不允许 → 下单包装层按位选 |
+| trade_mode | 4 | full，可交易 |
+| 账户模式 | HEDGING（对冲） | R4 解除：与 MT4 语义一致，v1 门禁无需调整 |
+
+> 该快照属于 MetaQuotes-Demo 通用 feed；其 demo feed 恰为 2 位报价。接入 Dukascopy MT5 后重跑 probe 并追加新快照（不覆盖，按 broker 留档）。
 
 ---
 

@@ -24,11 +24,10 @@
 - [x] T0.1 目录骨架 + pyproject + .gitignore + AGENTS.md（Day1 规矩）
 - [x] T0.2 三契约文档 v1.0 + 契约测试骨架
 - [x] T0.3 `tools/probe_mt5.py` 探测脚本
-- [ ] T0.4 环境就绪（按 probe 输出的 checklist）：安装 MetaTrader 5 终端 → 开 demo 账户 → `pip install MetaTrader5` → 终端常驻并允许算法交易
-      **2026-10-02 首轮探测结果**（`docs/probe/mt5_probe_report.md`）：
-      - ✅ Python 3.14.3（64 位）+ MetaTrader5 包 5.0.6231 安装成功，版本兼容无忧
-      - ❌ 本机未安装 MT5 终端；现役实盘 = **Dukascopy MT4**（`C:\Program Files (x86)\Dukascopy MetaTrader 4`，正在运行）
-      - 下一步：到 Dukascopy 申请 MT5 demo 账户并安装其 MT5 终端（同经纪商可最小化 spec 差异）
+- [x] T0.4 环境就绪（按 probe 输出的 checklist）：安装 MetaTrader 5 终端 → 开 demo 账户 → `pip install MetaTrader5` → 终端常驻并允许算法交易
+      **2026-10-02 实测**：用户已装 MetaTrader 5 build 6231 并登录 **MetaQuotes-Demo**（#113526190，$100k，对冲账户）；MetaTrader5 包 5.0.6231 + Python 3.14.3 兼容。仅剩：**M1 下单前开启终端"算法交易"按钮**（读数据不需要）。现役实盘 = Dukascopy MT4；M3 晋升前建议另开 Dukascopy MT5 demo 做 broker 平价验证（spec 快照按 broker 留档，不覆盖）。
+- [x] T0.5 跑 probe：账户模式（净持/对冲）、symbol spec（digits/point/filling/stops）、server offset、M1~D1 rates 可用性、ticks 可用性 → `docs/probe/mt5_probe_report.md`
+      **2026-10-02 全部通过**：对冲账户；XAUUSD digits=2/pip=0.01 与旧库惯例一致；server offset +3.00h；全 TF 桶一致率 100%（UTC 域 H4 桶=3600s，同旧库形态）；real ticks 近 6h 9.2 万条（M2 验证层可用）；deals 可读。契约 §4/§8 已回填实测值。
 - [ ] T0.5 跑 probe：账户模式（净持/对冲）、symbol spec（digits/point/filling/stops）、server offset、M1~D1 rates 可用性、ticks 可用性 → `docs/probe/mt5_probe_report.md`
 - [ ] T0.6 `core/mt5_client.py` 转正：offset 校准循环、symbol spec 缓存、下单包装（filling 自适应）通过单测（mock API）
 - [ ] T0.7 数据入库：`engine/data_factory.py` 拉 M1/M5/M15/M30/H1/H4/D1 → to_utc → upsert `ohlcv`；历史回填（terminal 可给的最大范围）
@@ -129,4 +128,5 @@
 
 ## 当前进度
 
-- 2026-10-02：PRD/架构/三契约/执行计划 v1.0 定稿；骨架 + 契约测试骨架（37 个用例全绿）+ probe 脚本提交；首轮 probe：Python 3.14 + MetaTrader5 包就绪，**缺 MT5 终端**（现役实盘 = Dukascopy MT4）。**下一步：T0.4 安装 Dukascopy MT5 demo → T0.5 重跑 probe → T0.7 数据入库。**
+- 2026-10-02：PRD/架构/三契约/执行计划 v1.0 定稿；骨架 + 契约测试（37 例全绿）+ probe 脚本提交。
+- 2026-10-02：**T0.4/T0.5 完成**——MT5 build 6231 + MetaQuotes-Demo 登录，probe 全项通过（对冲账户、digits=2、offset +3h、桶一致率 100%、real ticks 可用）；契约 §4/§8 回填实测值。**下一步：T0.6 mt5_client 转正 → T0.7 数据入库 → T0.8/0.9 研究层与清洗。**
