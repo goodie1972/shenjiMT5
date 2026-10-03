@@ -24,6 +24,8 @@ wmic process where "commandline like '%run_engine%'" call terminate
 # powershell Start-Process python -ArgumentList 'tools/supervise_engine.py --smoke --followave --duration 1209600' -WorkingDirectory 'D:\backup\BaoBao\PythonProgram\shenjiMT5' -WindowStyle Hidden
 # 全量测试
 pytest
+# 面板 Playwright 回归（需面板运行中；截图留档 tmp/qa_*.png）
+python tools/qa_dashboard.py
 # 周报（影子对照）
 python tools/weekly_shadow_report.py
 ```
