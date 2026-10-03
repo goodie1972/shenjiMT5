@@ -29,6 +29,7 @@ class FakeMT5:
     TRADE_RETCODE_DONE = 10009
     TRADE_RETCODE_DONE_PARTIAL = 10010
     TRADE_RETCODE_PLACED = 10008
+    TIMEFRAME_M1 = "M1"
 
     def __init__(self, tick_time, bid=2000.0, ask=2000.1):
         self._tick_time = tick_time
@@ -119,6 +120,42 @@ class TestTimezone:
         offset = client.calibrate_offset()
         assert abs(offset - 10800.0) <= 2               # 秒级取整误差容忍
         assert client.to_utc(now + 10800) == now
+
+    def test_calibrate_immune_to_stale_tick(self):
+        """影子运行实测回归：tick 陈旧 49s 不得烧进偏移（bar-open 法优先）。"""
+        now = int(time.time())
+        fake = FakeMT5(tick_time=now + 10800 - 49)      # 最后 tick 陈旧 49 秒
+        # M1 forming bar 开盘 = 当前分钟起点（server 域）
+        fake.bars = [{"time": (now // 60) * 60 + 10800}]
+        fake._rates = fake.bars
+
+        def copy_rates_from_pos(symbol, tf, pos, count):
+            return fake._rates[pos:pos + count]
+
+        fake.copy_rates_from_pos = copy_rates_from_pos
+        client = MT5Client(mt5_module=fake)
+        client._persist_offset = lambda: None
+        client.server_offset_sec = None
+        offset = client.calibrate_offset()
+        assert offset == 10800.0                        # 精确值，无 -49 抖动
+
+    def test_closed_market_keeps_persisted_offset(self):
+        """休市实测回归：tick/bar 全部陈旧时保持持久值（曾把 -13080s 持久化）。"""
+        now = int(time.time())
+        closed_tick = now + 10800 - 5 * 3600            # 最后 tick = 5 小时前（周五收盘）
+        fake = FakeMT5(tick_time=closed_tick)
+        fake.bars = [{"time": closed_tick - 59}]        # M1 bar 同样陈旧
+        fake._rates = fake.bars
+
+        def copy_rates_from_pos(symbol, tf, pos, count):
+            return fake._rates[pos:pos + count]
+
+        fake.copy_rates_from_pos = copy_rates_from_pos
+        client = MT5Client(mt5_module=fake)
+        client._persist_offset = lambda: None
+        client.server_offset_sec = 10800.0              # 周五开市时验证过的持久值
+        offset = client.calibrate_offset()
+        assert offset == 10800.0                        # 保持，不被休市垃圾改写
 
 
 class TestSymbolSpec:

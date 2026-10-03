@@ -313,22 +313,64 @@ class MT5Client:
 
     # ── 时区（D1）────────────────────────────────────────────
     def calibrate_offset(self) -> float:
-        """实测 server offset = 最新 tick.time − 本机 UTC。每 6h 重校；漂移>30min 告警疑似 DST。"""
+        """实测/维护 server offset。
+
+        影子运行两次实测教训（都发生在休市期）：
+        1. "最后 tick"测量会把 tick 陈旧度烧进偏移（曾错位 +49s）；
+        2. 休市时 tick 和 M1 bar **同时**陈旧，交叉校验失效（两个垃圾互相印证，
+           曾把 −13080s 持久化并重拉出全库错位数据）。
+
+        正确语义：偏移是经纪商 feed 的持久属性（本 demo = +3.0h 整），
+        **只在开市时重测，休市一律保持持久值**（休市不写库，错偏移无害）：
+        - 开市判定（有持久值时）：tick 相对持久偏移的 UTC 年龄 ≤ 180s；
+        - 开市重测用 M1 forming bar 开盘法（分钟对齐，免疫 tick 秒级陈旧）；
+        - 首次运行（无持久值）：bar/tick 互证一致（行情活跃）→ bar 法精确；
+          否则 tick 取整做临时值，开市后 6h 周期校准自动纠正。
+        """
         self.ensure_connected()
-        tick = self.get_tick(settings.SYMBOL)
-        server_ts = tick["time"]
         now_utc = time.time()
-        new_offset = float(server_ts - now_utc)
-        # tick.time 是秒级，取整误差容忍 60s
-        if self.server_offset_sec is None or abs(new_offset - self.server_offset_sec) > 60:
-            if self.server_offset_sec is not None:
-                drift = abs(new_offset - self.server_offset_sec)
+        tick = self.get_tick(settings.SYMBOL)
+        tick_measured = float(tick["time"] - now_utc)
+        bar_measured: Optional[float] = None
+        try:
+            bars = self._mt5.copy_rates_from_pos(settings.SYMBOL,
+                                                 self._mt5.TIMEFRAME_M1, 0, 1)
+            if bars is not None and len(bars):
+                bar_measured = float(int(bars[0]["time"]) - (int(now_utc) // 60) * 60)
+        except Exception:
+            logger.warning("[TimeSync] M1 bar-open 测量失败")
+
+        persisted = self.server_offset_sec
+        if persisted is not None:
+            tick_age = now_utc - (tick["time"] - persisted)
+            if tick_age > 180:
+                # 休市（或持久值失效）——保持持久值，休市不写库故无害
+                self._last_calibrated_at = now_utc
+                return persisted
+            if bar_measured is not None and abs(bar_measured - persisted) > 60:
+                drift = abs(bar_measured - persisted)
                 if drift > 1800:
                     logger.warning("[TimeSync] ⚠️ 服务器偏移漂移 %.2fh（旧 %.2fh → 新 %.2fh），"
                                    "疑似 broker DST 切换，已更新", drift / 3600.0,
-                                   self.server_offset_sec / 3600.0, new_offset / 3600.0)
-            self.server_offset_sec = new_offset
+                                   persisted / 3600.0, bar_measured / 3600.0)
+                else:
+                    logger.info("[TimeSync] 偏移微调 %+.0fs", bar_measured - persisted)
+                self.server_offset_sec = bar_measured
+                self._persist_offset()
+            self._last_calibrated_at = now_utc
+            return self.server_offset_sec
+
+        # 首次运行（无持久值）：bar/tick 互证一致（行情活跃）→ bar 法精确
+        if bar_measured is not None and abs(bar_measured - tick_measured) <= 90:
+            self.server_offset_sec = bar_measured
             self._persist_offset()
+            self._last_calibrated_at = now_utc
+            return self.server_offset_sec
+        provisional = round(tick_measured / 60.0) * 60.0
+        logger.warning("[TimeSync] 首次校准落在疑似休市（tick 年龄 %ds）——偏移 %+.0fs 为临时值，"
+                       "开市后自动校正", int(now_utc - (tick["time"] - provisional)), provisional)
+        self.server_offset_sec = provisional
+        self._persist_offset()
         self._last_calibrated_at = now_utc
         return self.server_offset_sec
 
