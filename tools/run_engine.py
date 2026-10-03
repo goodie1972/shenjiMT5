@@ -72,6 +72,7 @@ def main() -> int:
         end = time.time() + args.duration if args.duration else None
         while end is None or time.time() < end:
             stats = engine.tick()
+            engine._write_heartbeat()
             if stats["refreshed"]:
                 print(f"tick → refreshed={stats['refreshed']}")
             engine._sleep(engine.poll_seconds)

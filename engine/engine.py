@@ -95,11 +95,23 @@ class Engine:
             try:
                 self.client.maybe_recalibrate()
                 self.tick()
+                self._write_heartbeat()
                 if settings.utc_now() - self._last_reconcile > RECONCILE_INTERVAL_SEC:
                     self._run_reconcile()
             except Exception:
                 logger.exception("[engine] tick 异常（fail-safe：下个 tick 继续）")
             self._sleep(self.poll_seconds)
+
+    def _write_heartbeat(self) -> None:
+        """心跳文件（运维）：外部 watchdog 只看本文件 mtime 即可判断引擎存活性。"""
+        try:
+            import os
+            os.makedirs(settings.LOG_DIR, exist_ok=True)
+            with open(os.path.join(settings.LOG_DIR, "heartbeat.txt"), "w",
+                      encoding="utf-8") as f:
+                f.write(f"{int(settings.utc_now())}\n")
+        except OSError:
+            pass
 
     def _sleep(self, seconds: float) -> None:
         import time
