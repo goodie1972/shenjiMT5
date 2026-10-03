@@ -1,9 +1,40 @@
 {% extends "base.html" %}
 {% block content %}
+<div class="card chart-card">
+  <div class="card-head"><h3>MT5 vs MT4 每日已实现盈亏（近 14 天，UTC+8 日）</h3>
+    <span class="sub">虚线边框 = MT4 实盘参照</span></div>
+  <div id="chart-shadow" class="chart mid"></div>
+</div>
 <div class="card wide">
-  <h3>影子对照周报（最新）</h3>
+  <div class="card-head"><h3>影子对照周报（最新）</h3></div>
   {% if report %}<pre>{{ report }}</pre>
   {% else %}暂无周报——运行 <code>python tools/weekly_shadow_report.py</code> 生成{% endif %}
-  <div class="sub">跟踪档：docs/promotions/m{30,15}_followave_promotion.md</div>
+  <div class="sub">跟踪档：docs/promotions/m{30,15}_followave_promotion.md ｜ 判据：方向一致率 ≥90%（T2.6 修订）</div>
 </div>
+<script>
+let sChart;
+async function drawShadow(){
+  const d = await jget('/api/shadow/chart?days=14');
+  const el = document.getElementById('chart-shadow'); if(!el) return;
+  sChart = sChart || echarts.init(el, null, {renderer:'canvas'});
+  const bar = (name, data, color, dashed) => ({
+    type:'bar', name, data:data.map(v=>({value:v, itemStyle:{
+      color:color, borderColor:dashed?'#e8b34b':'transparent', borderWidth:dashed?1.5:0}}))});
+  sChart.setOption({
+    animation:false, grid:{left:56,right:14,top:40,bottom:32},
+    tooltip:{trigger:'axis'},
+    legend:{data:['M30 MT5','M30 MT4','M15 MT5','M15 MT4'],textStyle:{color:'#8a94a6',fontSize:11}},
+    xAxis:{type:'category',data:d.days,axisLabel:{color:'#8a94a6',fontSize:10}},
+    yAxis:{splitLine:{lineStyle:{color:'#1c2436'}},axisLabel:{color:'#8a94a6'}},
+    series:[
+      bar('M30 MT5', d.m30_ours, '#26a69a', false),
+      bar('M30 MT4', d.m30_old, 'rgba(38,166,154,0.25)', true),
+      bar('M15 MT5', d.m15_ours, '#5b8def', false),
+      bar('M15 MT4', d.m15_old, 'rgba(91,141,239,0.25)', true),
+    ]
+  }, true);
+}
+window.addEventListener('resize', ()=>{ sChart && sChart.resize(); });
+drawShadow(); setInterval(drawShadow, 60000);
+</script>
 {% endblock %}

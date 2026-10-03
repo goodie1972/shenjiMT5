@@ -1,6 +1,126 @@
 {% extends "base.html" %}
 {% block content %}
-<div hx-get="/partials/overview" hx-trigger="every 5s" hx-swap="innerHTML">
+<!-- 指标条（HTMX 5s 局部刷新） -->
+<div id="statstrip" hx-get="/partials/overview" hx-trigger="every 5s" hx-swap="innerHTML">
   {% include "_overview_body.html" %}
 </div>
+
+<div class="grid2">
+  <div class="card chart-card">
+    <div class="card-head">
+      <h3>XAUUSD 行情</h3>
+      <span class="tf-btns">
+        {% for tf in ['M5','M15','M30','H1'] %}
+        <button class="tf-btn {% if tf=='M30' %}on{% endif %}" data-tf="{{ tf }}">{{ tf }}</button>
+        {% endfor %}
+      </span>
+    </div>
+    <div id="chart-k" class="chart tall"></div>
+  </div>
+  <div class="card chart-card">
+    <div class="card-head"><h3>累计已实现盈亏</h3><span class="sub">trades 累计</span></div>
+    <div id="chart-eq" class="chart tall"></div>
+  </div>
+</div>
+
+<div class="card chart-card">
+  <div class="card-head"><h3>逐笔盈亏分布（最近 50 笔）</h3></div>
+  <div id="chart-pnl" class="chart mid"></div>
+</div>
+
+<div class="grid2">
+  <div class="card">
+    <div class="card-head"><h3>持仓</h3></div>
+    <div id="pos-table">
+      <table>
+        <tr><th>策略</th><th>方向</th><th>手数</th><th>开仓价</th><th>浮盈</th><th>时长</th></tr>
+        {% for p in positions %}
+        <tr><td>{{ p.strategy }}</td><td>{{ p.type }}</td><td>{{ p.volume }}</td>
+            <td class="mono">{{ '%.2f'|format(p.price_open) }}</td>
+            <td class="mono {{ 'up' if p.profit > 0 else ('down' if p.profit < 0 else '') }}">{{ '%+.2f'|format(p.profit) }}</td>
+            <td>{{ p.hold_min }}min</td></tr>
+        {% else %}<tr><td colspan="6" class="sub">无持仓</td></tr>{% endfor %}
+      </table>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-head"><h3>风控门禁 G0~G15</h3></div>
+    <div class="chips">
+      {% for g in risk %}
+      <div class="chip {{ 'ok' if g.state=='放行' else ('bad' if g.state=='拦截' else 'na') }}"
+           title="{{ g.name }} {{ g.detail }}">
+        <b>{{ g.id }}</b><span>{{ g.state }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<script>
+// ── K 线（含持仓入场线）──
+let kChart, kTf = 'M30';
+async function drawK(){
+  const candles = await jget(`/api/candles?tf=${kTf}&limit=180`);
+  const o = await jget('/api/overview');
+  const k = document.getElementById('chart-k'); if(!k) return;
+  kChart = kChart || echarts.init(k, null, {renderer:'canvas'});
+  const cat = candles.map(c=>fmtT(c.time));
+  const vals = candles.map(c=>[c.open,c.close,c.low,c.high]);
+  const series = [{type:'candlestick', data:vals, itemStyle:{color:'#26a69a',color0:'#ef5350',borderColor:'#26a69a',borderColor0:'#ef5350'}}];
+  for(const p of o.positions){   // 持仓入场线
+    series.push({type:'line', data:cat.map(()=>p.price_open), symbol:'none',
+      lineStyle:{type:'dashed',width:1,color:p.type==='BUY'?'#3fb96f':'#ef5350'},
+      name:p.strategy});
+  }
+  kChart.setOption({
+    animation:false, grid:{left:56,right:14,top:16,bottom:52},
+    tooltip:{trigger:'axis',axisPointer:{type:'cross'}},
+    xAxis:{type:'category',data:cat,boundaryGap:true,axisLabel:{color:'#8a94a6',fontSize:10}},
+    yAxis:{scale:true,splitLine:{lineStyle:{color:'#1c2436'}},axisLabel:{color:'#8a94a6'}},
+    series
+  }, true);
+}
+document.querySelectorAll('.tf-btn').forEach(b=>b.addEventListener('click',e=>{
+  document.querySelectorAll('.tf-btn').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on'); kTf = b.dataset.tf; drawK();
+}));
+window.addEventListener('resize', ()=>{ kChart && kChart.resize(); eqChart && eqChart.resize(); pChart && pChart.resize(); });
+
+// ── 累计盈亏曲线 ──
+let eqChart;
+async function drawEq(){
+  const eq = await jget('/api/equity');
+  const el = document.getElementById('chart-eq'); if(!el) return;
+  eqChart = eqChart || echarts.init(el, null, {renderer:'canvas'});
+  const last = eq.length ? eq[eq.length-1].cum : 0;
+  eqChart.setOption({
+    animation:false, grid:{left:56,right:14,top:24,bottom:52},
+    tooltip:{trigger:'axis'},
+    xAxis:{type:'category',data:eq.map(p=>fmtT(p.time)),axisLabel:{color:'#8a94a6',fontSize:10}},
+    yAxis:{scale:true,splitLine:{lineStyle:{color:'#1c2436'}},axisLabel:{color:'#8a94a6'}},
+    series:[{type:'line',data:eq.map(p=>p.cum),showSymbol:false,
+      lineStyle:{width:2,color:'#e8b34b'},areaStyle:{color:'rgba(232,179,75,.12)'},
+      markPoint:{data:eq.length?[{coord:[eq.length-1,last],value:last.toFixed(2),
+        itemStyle:{color:last>=0?'#3fb96f':'#e05252'},label:{color:'#fff'}}]:[]}}]
+  }, true);
+}
+
+// ── 逐笔盈亏 ──
+let pChart;
+async function drawPnl(){
+  const ts = await jget('/api/trade_pnls?limit=50');
+  const el = document.getElementById('chart-pnl'); if(!el) return;
+  pChart = pChart || echarts.init(el, null, {renderer:'canvas'});
+  pChart.setOption({
+    animation:false, grid:{left:56,right:14,top:16,bottom:64},
+    tooltip:{trigger:'axis'},
+    xAxis:{type:'category',data:ts.map(t=>t.strategy),
+      axisLabel:{color:'#8a94a6',fontSize:10,interval:0,rotate:35}},
+    yAxis:{splitLine:{lineStyle:{color:'#1c2436'}},axisLabel:{color:'#8a94a6'}},
+    series:[{type:'bar',data:ts.map(t=>({value:t.pnl,itemStyle:{color:t.pnl>=0?'#26a69a':'#ef5350'}}))}]
+  }, true);
+}
+drawK(); drawEq(); drawPnl();
+setInterval(()=>{ drawEq(); drawPnl(); }, 60000);
+</script>
 {% endblock %}

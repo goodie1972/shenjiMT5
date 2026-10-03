@@ -22,6 +22,18 @@ app = FastAPI(title="神机 MT5 监控", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=os.path.join(HERE, "static")), name="static")
 templates = Jinja2Templates(directory=os.path.join(HERE, "templates"))
 
+
+def _f_cls(v):
+    return "up" if (v or 0) > 0 else ("down" if (v or 0) < 0 else "")
+
+
+def _f_sign(v):
+    return "—" if v is None else f"{v:+.2f}"
+
+
+templates.env.filters["cls"] = _f_cls
+templates.env.filters["sign"] = _f_sign
+
 _TOKEN = os.environ.get("DASHBOARD_TOKEN", "")
 
 
@@ -79,7 +91,41 @@ def api_overview(request: Request):
         "pnl": ctx["pnl"],
         "positions": ctx["positions"],
         "market_open": ctx["market_open"],
+        "tick": queries.tick_info(),
     }
+
+
+@app.get("/api/candles")
+def api_candles(request: Request, tf: str = "M30", limit: int = 200):
+    _check_token(request)
+    try:
+        return queries.candles(tf, min(max(limit, 20), 1000))
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"非法周期 {tf}")
+
+
+@app.get("/api/equity")
+def api_equity(request: Request):
+    _check_token(request)
+    return queries.equity_curve()
+
+
+@app.get("/api/trade_pnls")
+def api_trade_pnls(request: Request, limit: int = 50):
+    _check_token(request)
+    return queries.trade_pnls(min(max(limit, 10), 200))
+
+
+@app.get("/api/daily_pnl")
+def api_daily_pnl(request: Request, days: int = 30):
+    _check_token(request)
+    return queries.daily_pnl(min(max(days, 7), 180))
+
+
+@app.get("/api/shadow/chart")
+def api_shadow_chart(request: Request, days: int = 14):
+    _check_token(request)
+    return queries.shadow_daily(min(max(days, 7), 60))
 
 
 def _overview_ctx() -> dict:

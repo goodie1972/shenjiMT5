@@ -1,45 +1,73 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="grid">
-  <div class="card wide">
-    <h3>近 24h 门禁拦截统计</h3>
-    {% if gate_stats %}
-    <table><tr><th>门禁</th><th>原因</th><th>次数</th></tr>
-      {% for g in gate_stats %}<tr><td>{{ g.gate }}</td><td>{{ g.reason }}</td><td>{{ g.count }}</td></tr>{% endfor %}
-    </table>
-    {% else %}无拦截记录{% endif %}
+<div class="card chart-card">
+  <div class="card-head"><h3>每日已实现盈亏（近 30 天，UTC+8 日）</h3></div>
+  <div id="chart-day" class="chart mid"></div>
+</div>
+<div class="grid2">
+  <div class="card chart-card">
+    <div class="card-head"><h3>近 24h 门禁拦截分布</h3></div>
+    <div id="chart-gates" class="chart small"></div>
   </div>
-  <div class="card wide">
-    <h3>信号（最近 {{ signals|length }} 条）</h3>
+  <div class="card">
+    <div class="card-head"><h3>拦截明细（近 24h）</h3></div>
     <table>
-      <tr><th>时间</th><th>策略</th><th>TF</th><th>方向</th><th>评分</th><th>状态</th><th>原因</th></tr>
-      {% for s in signals %}
-      <tr><td>{{ s.time }}</td><td>{{ s.strategy }}</td><td>{{ s.tf }}</td><td>{{ s.direction }}</td>
-          <td>{{ s.score }}</td><td>{{ s.status }}</td><td class="sub">{{ s.exit_reason }}</td></tr>
-      {% endfor %}
-    </table>
-  </div>
-  <div class="card wide">
-    <h3>平仓成交（最近 {{ trades|length }} 笔）</h3>
-    <table>
-      <tr><th>平仓时间</th><th>策略</th><th>方向</th><th>手数</th><th>入场</th><th>出场</th><th>盈亏</th><th>来源</th><th>原因</th></tr>
-      {% for t in trades %}
-      <tr><td>{{ t.close }}</td><td>{{ t.strategy }}</td><td>{{ t.direction }}</td><td>{{ t.volume }}</td>
-          <td>{{ t.entry|round(2) if t.entry }}</td><td>{{ t.exit|round(2) if t.exit }}</td>
-          <td class="{{ 'up' if (t.pnl or 0) > 0 else ('down' if (t.pnl or 0) < 0 else '') }}">{{ t.pnl }}</td>
-          <td>{{ t.src }}</td><td>{{ t.reason }}</td></tr>
-      {% endfor %}
-    </table>
-  </div>
-  <div class="card wide">
-    <h3>Journal 尾部（{{ journal|length }}）</h3>
-    <table>
-      <tr><th>ticket</th><th>策略</th><th>方向</th><th>盈亏</th><th>原因</th><th>close_ts</th></tr>
-      {% for j in journal %}
-      <tr><td>{{ j.position_ticket }}</td><td>{{ j.strategy }}</td><td>{{ j.direction }}</td>
-          <td>{{ j.pnl }}</td><td>{{ j.exit_reason }}</td><td>{{ j.close_ts }}</td></tr>
-      {% endfor %}
+      <tr><th>门禁</th><th>原因</th><th>次数</th></tr>
+      {% for g in gate_stats %}<tr><td>{{ g.gate }}</td><td class="sub">{{ g.reason }}</td><td>{{ g.count }}</td></tr>{% endfor %}
+      {% if not gate_stats %}<tr><td colspan="3" class="sub">无拦截记录</td></tr>{% endif %}
     </table>
   </div>
 </div>
+<div class="card wide">
+  <div class="card-head"><h3>信号（最近 {{ signals|length }} 条）</h3></div>
+  <table>
+    <tr><th>时间</th><th>策略</th><th>TF</th><th>方向</th><th>评分</th><th>状态</th><th>原因</th></tr>
+    {% for s in signals %}
+    <tr><td class="mono">{{ s.time }}</td><td>{{ s.strategy }}</td><td>{{ s.tf }}</td>
+        <td class="{{ 'up' if s.direction=='BUY' else ('down' if s.direction=='SELL' else '') }}">{{ s.direction }}</td>
+        <td class="mono">{{ s.score }}</td>
+        <td>{{ s.status }}</td><td class="sub">{{ s.exit_reason }}</td></tr>
+    {% endfor %}
+  </table>
+</div>
+<div class="card wide">
+  <div class="card-head"><h3>平仓成交（最近 {{ trades|length }} 笔）</h3></div>
+  <table>
+    <tr><th>平仓时间</th><th>策略</th><th>方向</th><th>手数</th><th>入场</th><th>出场</th><th>盈亏</th><th>来源</th><th>原因</th></tr>
+    {% for t in trades %}
+    <tr><td class="mono">{{ t.close }}</td><td>{{ t.strategy }}</td><td>{{ t.direction }}</td><td>{{ t.volume }}</td>
+        <td class="mono">{{ '%.2f'|format(t.entry) if t.entry }}</td><td class="mono">{{ '%.2f'|format(t.exit) if t.exit }}</td>
+        <td class="mono {{ t.pnl|cls }}">{{ t.pnl|sign }}</td>
+        <td class="sub">{{ t.src }}</td><td class="sub">{{ t.reason }}</td></tr>
+    {% endfor %}
+  </table>
+</div>
+<script>
+let dChart, gChart;
+async function drawDaily(){
+  const data = await jget('/api/daily_pnl?days=30');
+  const el = document.getElementById('chart-day'); if(!el) return;
+  dChart = dChart || echarts.init(el, null, {renderer:'canvas'});
+  dChart.setOption({
+    animation:false, grid:{left:56,right:14,top:16,bottom:32},
+    tooltip:{trigger:'axis'},
+    xAxis:{type:'category',data:data.map(d=>d.day),axisLabel:{color:'#8a94a6',fontSize:10}},
+    yAxis:{splitLine:{lineStyle:{color:'#1c2436'}},axisLabel:{color:'#8a94a6'}},
+    series:[{type:'bar',data:data.map(d=>({value:d.pnl,itemStyle:{color:d.pnl>=0?'#26a69a':'#ef5350'}}))}]
+  }, true);
+}
+async function drawGates(){
+  const stats = {{ gate_stats | tojson }};
+  const el = document.getElementById('chart-gates'); if(!el) return;
+  gChart = gChart || echarts.init(el, null, {renderer:'canvas'});
+  gChart.setOption({
+    animation:false, tooltip:{trigger:'item'},
+    series:[{type:'pie',radius:['42%','68%'],center:['50%','52%'],
+      label:{color:'#8a94a6',fontSize:11,formatter:'{b}: {c}'},
+      data:stats.map(s=>({name:s.gate,value:s.count}))}]
+  }, true);
+}
+window.addEventListener('resize', ()=>{ dChart && dChart.resize(); gChart && gChart.resize(); });
+drawDaily(); drawGates();
+</script>
 {% endblock %}

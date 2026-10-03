@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from datetime import timedelta
 from typing import Optional
 
 from config import settings
@@ -230,3 +231,126 @@ def latest_shadow_report() -> Optional[str]:
         return None
     path = os.path.join(rdir, files[-1])
     return open(path, encoding="utf-8").read()
+
+
+# ── 图表数据（v2：ECharts 可视化）───────────────────────────
+
+def candles(tf: str = "M30", limit: int = 200) -> list[dict]:
+    if tf not in settings.TIMEFRAMES:
+        raise ValueError(tf)
+    ro = db.readonly_connect()
+    try:
+        rows = ro.execute(
+            "SELECT timestamp, open, high, low, close, volume FROM ohlcv"
+            " WHERE timeframe=? ORDER BY timestamp DESC LIMIT ?",
+            (tf, limit)).fetchall()
+    finally:
+        ro.close()
+    return [{"time": r[0], "open": r[1], "high": r[2], "low": r[3],
+             "close": r[4], "volume": r[5]} for r in reversed(rows)]
+
+
+def equity_curve() -> list[dict]:
+    """已实现累计盈亏曲线（trades 依平仓时间累加）。"""
+    ro = db.readonly_connect()
+    try:
+        rows = ro.execute(
+            "SELECT close_ts, pnl FROM trades WHERE close_ts IS NOT NULL"
+            " AND pnl IS NOT NULL ORDER BY close_ts").fetchall()
+    finally:
+        ro.close()
+    cum, out = 0.0, []
+    for ts, pnl in rows:
+        cum += float(pnl or 0.0)
+        out.append({"time": int(ts), "cum": round(cum, 2)})
+    return out
+
+
+def trade_pnls(limit: int = 50) -> list[dict]:
+    ro = db.readonly_connect()
+    try:
+        rows = ro.execute(
+            "SELECT close_ts, strategy, pnl FROM trades WHERE close_ts IS NOT NULL"
+            " AND pnl IS NOT NULL ORDER BY close_ts DESC LIMIT ?", (limit,)).fetchall()
+    finally:
+        ro.close()
+    return [{"time": _fmt_ts(r[0]), "strategy": r[1], "pnl": round(float(r[2] or 0), 2)}
+            for r in reversed(rows)]
+
+
+def daily_pnl(days: int = 30) -> list[dict]:
+    """按 UTC+8 自然日聚合的已实现盈亏。"""
+    since = int(settings.utc_now()) - days * 86400
+    ro = db.readonly_connect()
+    try:
+        rows = ro.execute(
+            "SELECT close_ts, pnl FROM trades WHERE close_ts >= ? AND pnl IS NOT NULL",
+            (since,)).fetchall()
+    finally:
+        ro.close()
+    agg: dict[str, float] = {}
+    for ts, pnl in rows:
+        day = local_dt(int(ts)).strftime("%m-%d")
+        agg[day] = agg.get(day, 0.0) + float(pnl or 0.0)
+    return [{"day": k, "pnl": round(v, 2)} for k, v in sorted(agg.items())]
+
+
+def shadow_daily(days: int = 14) -> dict:
+    """影子对照：MT5 vs MT4 各策略每日已实现盈亏（UTC+8 日）。"""
+    import datetime as _dt
+    now = settings.utc_now()
+    t0 = int(now) - days * 86400
+    ours: dict[tuple[str, str], float] = {}
+    ro = db.readonly_connect()
+    try:
+        rows = ro.execute(
+            "SELECT close_ts, strategy, pnl FROM trades WHERE close_ts >= ?"
+            " AND pnl IS NOT NULL", (t0,)).fetchall()
+    finally:
+        ro.close()
+    for ts, strategy, pnl in rows:
+        day = local_dt(int(ts)).strftime("%m-%d")
+        ours[(strategy, day)] = ours.get((strategy, day), 0.0) + float(pnl or 0.0)
+
+    old: dict[tuple[str, str], float] = {}
+    try:
+        from tools.mt4_overlap_check import old_db_connect
+        oc = old_db_connect()
+        oc.execute("PRAGMA query_only=ON")
+        for strat in ("m30_followave", "m15_followave"):
+            trows = oc.execute(
+                "SELECT close_time, pnl FROM trades WHERE strategy=?", (strat,)).fetchall()
+            for close_time, pnl in trows:
+                try:
+                    ct = _dt.datetime.strptime(close_time, "%Y-%m-%d %H:%M:%S").replace(
+                        tzinfo=_dt.timezone(timedelta(hours=8)))
+                except ValueError:
+                    continue
+                if int(ct.timestamp()) < t0:
+                    continue
+                day = ct.strftime("%m-%d")
+                old[(strat, day)] = old.get((strat, day), 0.0) + float(pnl or 0.0)
+        oc.close()
+    except Exception:
+        pass
+
+    day_keys = sorted({d for _, d in list(ours) + list(old)})
+    return {
+        "days": day_keys,
+        "m30_ours": [round(ours.get(("m30_followave", d), 0.0), 2) for d in day_keys],
+        "m30_old": [round(old.get(("m30_followave", d), 0.0), 2) for d in day_keys],
+        "m15_ours": [round(ours.get(("m15_followave", d), 0.0), 2) for d in day_keys],
+        "m15_old": [round(old.get(("m15_followave", d), 0.0), 2) for d in day_keys],
+    }
+
+
+def tick_info() -> Optional[dict]:
+    client = _get_client()
+    if client is None:
+        return None
+    try:
+        t = client.get_tick(settings.SYMBOL)
+        return {"bid": t["bid"], "ask": t["ask"],
+                "spread": round(t["ask"] - t["bid"], 2)}
+    except Exception:
+        return None

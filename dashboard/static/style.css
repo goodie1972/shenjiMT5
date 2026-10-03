@@ -1,22 +1,64 @@
-:root{--bg:#0f1420;--card:#171e2e;--fg:#d8dee9;--sub:#8a94a6;--ok:#3fb96f;--bad:#e05252;--na:#8a94a6;--up:#3fb96f;--down:#e05252}
+:root{--bg:#0b0e14;--card:#121826;--card2:#161d2e;--line:#1f2940;--fg:#d8dee9;--sub:#8a94a6;--ok:#3fb96f;--bad:#e05252;--na:#6b7690;--up:#26a69a;--down:#ef5350;--gold:#e8b34b}
 *{box-sizing:border-box}
-body{background:var(--bg);color:var(--fg);font-family:"Segoe UI",system-ui,sans-serif;margin:0;padding:0 0 40px}
-nav{display:flex;gap:18px;align-items:center;padding:12px 18px;background:#0b0f18;position:sticky;top:0}
-nav .brand{font-weight:700;color:#e8b34b;margin-right:12px}
-nav a{color:var(--sub);text-decoration:none;padding:4px 10px;border-radius:6px}
-nav a.on{color:var(--fg);background:#222b40}
-main{padding:16px;max-width:1100px;margin:0 auto}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
-.card{background:var(--card);border-radius:10px;padding:14px 16px;overflow-x:auto}
+body{background:var(--bg);color:var(--fg);font-family:"Segoe UI",system-ui,sans-serif;margin:0;padding:0 0 48px;font-size:14px}
+.mono,.val.mono,.mono td{font-family:Consolas,"Cascadia Mono",monospace}
+
+/* ── 顶栏 ── */
+header{display:flex;align-items:center;gap:22px;padding:10px 20px;background:linear-gradient(180deg,#10151f,#0b0e14);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:10}
+.brand{font-weight:800;font-size:17px;color:var(--gold);letter-spacing:.02em}
+.brand span{color:var(--fg);font-weight:400;margin-left:4px;font-size:13px}
+.ticker{font-size:14px}
+.ticker .bid{color:var(--up)} .ticker .ask{color:var(--down)}
+nav{display:flex;gap:6px;margin-left:auto}
+nav a{color:var(--sub);text-decoration:none;padding:5px 14px;border-radius:7px;font-size:13px}
+nav a.on{color:var(--fg);background:#1c2540;font-weight:600}
+.engine-badge{font-size:12px;padding:4px 12px;border-radius:20px;border:1px solid var(--line)}
+.engine-badge.on{color:var(--ok);border-color:rgba(63,185,111,.4);background:rgba(63,185,111,.08)}
+.engine-badge.off{color:var(--bad);border-color:rgba(224,82,82,.4);background:rgba(224,82,82,.08)}
+
+main{padding:16px 20px;max-width:1280px;margin:0 auto}
+
+/* ── 指标条 ── */
+.strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:14px}
+.tile{background:linear-gradient(180deg,var(--card2),var(--card));border:1px solid var(--line);border-radius:12px;padding:12px 16px;display:flex;flex-direction:column;gap:2px}
+.tile .lbl{color:var(--sub);font-size:11px;text-transform:uppercase;letter-spacing:.08em}
+.tile .val{font-size:22px;font-weight:700;font-family:Consolas,monospace}
+.tile .sub{color:var(--sub);font-size:11px}
+
+/* ── 卡片与网格 ── */
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;overflow-x:auto;margin-bottom:14px}
 .card.wide{grid-column:1/-1}
-.card h3{margin:0 0 10px;font-size:14px;color:#aeb8c9;text-transform:uppercase;letter-spacing:.05em}
-.sub{color:var(--sub);font-size:12px;margin-top:6px}
-.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px}
-.dot.ok{background:var(--ok)} .dot.bad{background:var(--bad)} .dot.na{background:var(--na)}
-.up{color:var(--up)} .down{color:var(--down)}
+.card-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.card h3{margin:0;font-size:13px;color:#aeb8c9;text-transform:uppercase;letter-spacing:.06em}
+.chart{width:100%}
+.chart.tall{height:360px}.chart.mid{height:260px}.chart.small{height:220px}
+.sub{color:var(--sub);font-size:12px}
+.up{color:var(--up)}.down{color:var(--down)}
+.mono{font-family:Consolas,monospace}
+
+/* ── 表格 ── */
 table{border-collapse:collapse;width:100%;font-size:13px}
-th,td{text-align:left;padding:5px 8px;border-bottom:1px solid #232c40}
-th{color:var(--sub);font-weight:600}
-pre{background:#0b0f18;padding:12px;border-radius:8px;overflow-x:auto;font-size:12px}
-code{background:#0b0f18;padding:2px 6px;border-radius:4px}
-@media(max-width:600px){.grid{grid-template-columns:1fr}nav{gap:10px}}
+th,td{text-align:left;padding:6px 9px;border-bottom:1px solid var(--line)}
+th{color:var(--sub);font-weight:600;font-size:12px}
+tr:hover td{background:#161d2f}
+
+/* ── 风控 chips ── */
+.chips{display:grid;grid-template-columns:repeat(auto-fill,minmax(86px,1fr));gap:8px}
+.chip{border:1px solid var(--line);border-radius:9px;padding:7px 6px;text-align:center;background:var(--card2)}
+.chip b{display:block;font-size:12px;color:var(--fg)}
+.chip span{font-size:10px;color:var(--sub)}
+.chip.ok{border-color:rgba(63,185,111,.45)}
+.chip.ok span{color:var(--ok)}
+.chip.bad{border-color:rgba(224,82,82,.5);background:rgba(224,82,82,.06)}
+.chip.bad span{color:var(--bad)}
+
+/* ── K 线周期按钮 ── */
+.tf-btn{background:var(--card2);border:1px solid var(--line);color:var(--sub);padding:3px 11px;border-radius:6px;cursor:pointer;font-size:12px}
+.tf-btn.on{color:var(--gold);border-color:rgba(232,179,75,.5)}
+
+@media(max-width:760px){
+  .grid2{grid-template-columns:1fr}
+  header{flex-wrap:wrap;gap:10px}
+  .ticker{order:3;width:100%}
+}

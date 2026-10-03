@@ -61,9 +61,12 @@ GET /api/shadow/weekly → 读最新 shadow_weekly_*.md
 端口 8800（`--host 0.0.0.0` LAN 可见）；htmx 本地化（无外链依赖）；测试 7 例。
 已脱离会话运行。
 
-**验收测试（Playwright 真浏览器模拟，`tools/qa_dashboard.py`）**：19/19 通过——
-三页面渲染断言、HTMX 挂载与 5s 自动刷新、风控表 16 行、样式生效、移动端视口
-无横向溢出、manifest 引用；截图留档 `tmp/qa_*.png`。改面板代码后重跑即可回归。
+**验收测试（Playwright 真浏览器模拟，`tools/qa_dashboard.py`）**：29/29 通过——
+三页面渲染断言、指标条 6 格、风控 chips 18 行、ECharts 图表 canvas（K线/权益/
+逐笔/每日/门禁饼图/影子对照 6 图）、周期按钮交互、HTMX 5s 刷新、移动端无溢出；
+截图留档 `tmp/qa_*.png` 人工复核。改面板代码后重跑即可回归。
+曾抓出并修复：drawEq 花括号缺失（JS 语法错误炸掉全部图表）、jget 时序
+（base 工具函数提前至 head）、Jinja 过滤器缺失（cls/sign）。
 
 ## 5. App 路线（远期）
 

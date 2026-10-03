@@ -32,40 +32,55 @@ def main() -> int:
         # ── P1 总览 ──
         page.goto(BASE + "/", wait_until="networkidle")
         check("总览: 品牌标题", page.locator(".brand").first.is_visible())
-        check("总览: 引擎卡片", page.locator(".card h3", has_text="引擎").first.is_visible())
-        check("总览: 账户卡片", page.locator(".card h3", has_text="账户").first.is_visible())
-        check("总览: 盈亏卡片", page.locator(".card h3", has_text="已实现盈亏").first.is_visible())
-        check("总览: 风控表 G0~G15 共 16 行",
-              page.locator("table.gates tr").count() >= 16)
+        check("总览: 引擎指标格", page.locator(".tile .lbl", has_text="引擎").first.is_visible())
+        check("总览: 账户指标格", page.locator(".tile .lbl", has_text="净值").first.is_visible())
+        check("总览: 盈亏指标格", page.locator(".tile .lbl", has_text="今日盈亏").first.is_visible())
+        check("总览: 风控 chips 18 行（含 G3b/G9b）", page.locator(".chip").count() == 18)
         check("总览: HTMX 已加载", page.evaluate("typeof window.htmx !== 'undefined'"))
         check("总览: 自动刷新挂载",
               page.locator("[hx-get='/partials/overview']").count() == 1)
-        check("总览: 心跳状态灯", page.locator(".dot").first.is_visible())
+        check("总览: 指标条 6 格", page.locator(".tile").count() == 6)
+        check("总览: ECharts 已加载", page.evaluate("typeof window.echarts !== 'undefined'"))
+        page.wait_for_timeout(2500)                      # 等 fetch+渲染
+        check("总览: K 线 canvas 渲染", page.locator("#chart-k canvas").count() >= 1)
+        check("总览: 权益曲线 canvas", page.locator("#chart-eq canvas").count() >= 1)
+        check("总览: 逐笔盈亏 canvas", page.locator("#chart-pnl canvas").count() >= 1)
+        check("总览: 行情条 bid/ask", page.locator("#ticker .bid").first.is_visible())
+        check("总览: 周期按钮 4 个", page.locator(".tf-btn").count() == 4)
+        page.click(".tf-btn[data-tf='H1']")              # 交互：切周期
+        page.wait_for_timeout(1200)
+        check("总览: 切 H1 后 canvas 仍渲染", page.locator("#chart-k canvas").count() >= 1)
+        page.click(".tf-btn[data-tf='M30']")
         css = page.evaluate(
             "getComputedStyle(document.body).backgroundColor")
         check(f"总览: 样式表生效（bg={css}）", css not in ("rgba(0, 0, 0, 0)", ""))
         page.wait_for_timeout(6200)                      # 跨一次 HTMX 5s 刷新
-        check("总览: 5s 自动刷新后仍正常", page.locator(".dot").first.is_visible())
+        check("总览: 5s 自动刷新后仍正常", page.locator(".tile").count() == 6)
         page.screenshot(path="tmp/qa_overview.png", full_page=True)
 
         # ── P2 流水 ──
         page.goto(BASE + "/flows", wait_until="networkidle")
-        check("流水: 拦截统计区块",
-              page.locator(".card h3", has_text="门禁拦截统计").first.is_visible())
+        check("流水: 拦截明细区块",
+              page.locator(".card h3", has_text="拦截明细").first.is_visible())
         check("流水: 信号表", page.locator(".card h3", has_text="信号（最近").first.is_visible())
         check("流水: 成交表", page.locator(".card h3", has_text="平仓成交").first.is_visible())
-        check("流水: Journal 区块", page.locator(".card h3", has_text="Journal").first.is_visible())
+        check("流水: 每日盈亏图表区块", page.locator(".card h3", has_text="每日已实现盈亏").first.is_visible())
+        page.wait_for_timeout(2000)
+        check("流水: 每日盈亏 canvas", page.locator("#chart-day canvas").count() >= 1)
+        check("流水: 门禁饼图 canvas", page.locator("#chart-gates canvas").count() >= 1)
         page.screenshot(path="tmp/qa_flows.png", full_page=True)
 
         # ── P3 影子对照 ──
         page.goto(BASE + "/shadow", wait_until="networkidle")
         check("影子: 周报区块", page.locator(".card h3", has_text="影子对照周报").first.is_visible())
+        page.wait_for_timeout(2000)
+        check("影子: 对照图 canvas", page.locator("#chart-shadow canvas").count() >= 1)
         page.screenshot(path="tmp/qa_shadow.png", full_page=True)
 
         # ── 移动端视口（PWA 响应式）──
         mob = browser.new_page(viewport={"width": 375, "height": 812})
         mob.goto(BASE + "/", wait_until="networkidle")
-        check("移动端: 总览渲染", mob.locator(".card h3", has_text="引擎").first.is_visible())
+        check("移动端: 总览渲染", mob.locator(".tile .lbl", has_text="引擎").first.is_visible())
         overflow = mob.evaluate(
             "document.documentElement.scrollWidth - document.documentElement.clientWidth")
         check(f"移动端: 无横向溢出（{overflow}px）", overflow <= 2)

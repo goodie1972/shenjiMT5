@@ -3,19 +3,48 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#0f1420">
+<meta name="theme-color" content="#0b0e14">
 <link rel="manifest" href="/static/manifest.webmanifest">
 <title>神机 MT5 监控</title>
 <link rel="stylesheet" href="/static/style.css">
 <script src="/static/htmx.min.js"></script>
+<script src="/static/echarts.min.js"></script>
+<script>
+// 全局工具（必须先于页面内容脚本定义——jget 曾因时序在页面脚本里 undefined）
+async function jget(url){ const r = await fetch(url); if(!r.ok) throw new Error(r.status); return r.json(); }
+function fmtT(ts){ return new Date(ts*1000).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}); }
+function sign(v){ return (v>0?'+':'') + (v==null?'—':(+v).toFixed(2)); }
+function cls(v){ return v>0?'up':(v<0?'down':''); }
+</script>
 </head>
 <body>
-<nav>
-  <span class="brand">神机 MT5</span>
-  <a href="/" {% if active=='overview' %}class="on"{% endif %}>总览</a>
-  <a href="/flows" {% if active=='flows' %}class="on"{% endif %}>流水</a>
-  <a href="/shadow" {% if active=='shadow' %}class="on"{% endif %}>影子对照</a>
-</nav>
+<header>
+  <div class="brand">神机<span>MT5</span></div>
+  <div class="ticker" id="ticker">XAUUSD <span class="sub">载入中…</span></div>
+  <nav>
+    <a href="/" {% if active=='overview' %}class="on"{% endif %}>总览</a>
+    <a href="/flows" {% if active=='flows' %}class="on"{% endif %}>流水</a>
+    <a href="/shadow" {% if active=='shadow' %}class="on"{% endif %}>影子对照</a>
+  </nav>
+  <div class="engine-badge" id="engine-badge">…</div>
+</header>
 <main>{% block content %}{% endblock %}</main>
+<script>
+// 顶部行情条 + 引擎徽章（每 5s；需要 DOM，置于 body 底部）
+async function refreshHeader(){
+  try{
+    const o = await jget('/api/overview');
+    const t = o.tick;
+    document.getElementById('ticker').innerHTML = t
+      ? `XAUUSD <b class="bid">${t.bid.toFixed(2)}</b> / <b class="ask">${t.ask.toFixed(2)}</b> <span class="sub">点差 ${t.spread.toFixed(2)}</span>`
+      : 'XAUUSD <span class="sub">终端不可达</span>';
+    const e = o.engine;
+    const b = document.getElementById('engine-badge');
+    b.className = 'engine-badge ' + (e.alive ? 'on' : 'off');
+    b.textContent = e.alive ? '● 引擎运行中' : '● 引擎失联';
+  }catch(e){ /* 面板静默降级 */ }
+}
+refreshHeader(); setInterval(refreshHeader, 5000);
+</script>
 </body>
 </html>
