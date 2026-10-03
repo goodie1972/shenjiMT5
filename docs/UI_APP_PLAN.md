@@ -78,4 +78,90 @@ GET /api/shadow/weekly → 读最新 shadow_weekly_*.md
 
 - dashboard 代码只读 DB（readonly_connect），违反 = 违约（AGENTS §3）。
 - dashboard 进程崩溃不影响引擎（解耦）；引擎崩溃由看门狗负责，不由 dashboard。
-- 不做 UI 自动化测试（监控页，坏了重开就好）；契约测试覆盖的仍是引擎层。
+- 面板回归 = `python tools/qa_dashboard.py`（Playwright 29 断言；v1 曾写"不做 UI 自动化测试"，v2 起作废）。
+
+---
+
+# v3 路线图 — 三大中心移植 + PA_Agent 集成（2026-10-03 规划）
+
+> 用户裁定：v2 太简单，"不如直接用 MT5 终端"。要求参照旧库三大中心（交易中心/策略中心/回测中心）扩展，并评估 PA_Agent 集成。经两轮深度探索（旧库 dashboard 49 组件/120 端点全量盘点；PA_Agent 147 模块架构分析），规划如下。
+
+## 7.1 旧库三大中心功能盘点与取舍
+
+### 交易中心（旧库称"交易终端"）
+
+| 旧库功能 | 取舍 | 理由 |
+|----------|------|------|
+| K线 + 12 指标多窗格（1341 行单体组件 + 300 行客户端 TA 重实现） | **改造复用**：ECharts 实现 K线+EMA/BOLL 叠加+RSI/MACD/ATR 副图，指标服务端算好喂 JSON | 单体组件与客户端 TA 重实现是维护坑 |
+| 手动平仓（确认+重试循环）/ 改 SL/TP | **原样复用** | 旧库核实根本没有手动开单——"交易中心"实质是持仓管理；新库面板平仓走自己的 mt5_client，引擎 `_on_position_gone` 兜底同步已就位 |
+| 手动开单 | **新增，默认缓** | 面板开单绕过策略门禁（仅 G0/G5 兜底）——做成"显式开启+二次确认" |
+| 引擎启停/重启 | **复用** | 面板做进程管理（watchdog/supervisor），不嵌引擎 |
+| 引擎嵌在面板进程（EngineRunner） | **坚决丢弃** | GIL 争用 + 耦合，旧库最大架构债 |
+
+### 策略中心
+
+| 旧库功能 | 取舍 | 理由 |
+|----------|------|------|
+| 策略池卡片（启停/TF/magic 编辑）+ importlib 热加/减 | **复用，分两步**：先只读展示+编辑后重启生效；热加载后置 | 简单可靠优先 |
+| 每策略 stats（胜率/PF/连亏/最大连亏，按 magic 族） | **思路原样复用** | trades/signals 齐全，面板 SQL 即算 |
+| 上传 .py + AST 危险扫描 | 扫描思路保留，上传不做 | 本地放文件即可；上传=攻击面 |
+| markdown 解析逻辑表 + 994 行手翻字典 | **丢弃** | 过度工程 |
+| 三重数据源（runtime_config/settings/内存） | **丢弃——单一来源** | 旧库"M-9 越刷越错"bug 链根因 |
+
+### 回测中心
+
+| 旧库功能 | 取舍 | 理由 |
+|----------|------|------|
+| 作业 API：submit → 数据预检 → status/phases/logs → results/history | **原样复用** | 交互形态成熟 |
+| 真实策略逐行回测 | 已有（followave_backtest） | 泛化为参数化作业 |
+| 公式 DSL/组合指标→生成策略 | **远期** | 旧库 4 条信号管线并存是清理目标 |
+| 回测跑在面板进程线程内 | **改为子进程** | 旧库 GIL 争用/软停止/作业内存丢失三连教训 |
+
+### 三大中心之外值得抄
+
+健康巡检（GREEN/YELLOW/RED + 每策略封锁详情与剩余冷却）→ P1 升级；日报/周报生成（10min/午夜）→ 新页面；新闻日历（ForexFactory）→ G1 接线时一起做。AI 对话子系统（895 行 ai.py：SSE 聊天+工具+MCP+persona）→ 被 PA_Agent sidecar 方案取代。
+
+## 7.2 PA_Agent 集成（AGPL 合规路线）
+
+**它是什么**：PyQt6 桌面应用，AI 辅助 Price Action K线分析。两阶段管线（市场诊断 JSON → 交易决策 JSON：订单建议/入场/SL/TP/置信度/下一根 bar 预测），13 家 LLM 路由（DeepSeek/GLM/Kimi/Qwen/Ollama…），结构化输出校验+重试，经验库（按行情状态检索历史成败案例注入提示词），飞书/PushPlus 通知。**刻意不做工具调用、不碰下单**——"程序算事实 → 提示词 → 校验过的 JSON 回来"，110 个测试文件，工程纪律好，活跃维护。
+
+**关键约束：AGPL-3.0**。核心 Qt-free 可库化（`AppContext` + `TwoStageOrchestrator.submit()` 返回 AnalysisRecord + `FreeChatSession` 多轮追问），但网络交互触发源码义务。**合规路线 = 进程隔离 sidecar**：
+
+```
+引擎(K线/journal) ──KlineFrame──▶ pa_agent sidecar（独立 venv/独立进程，
+                                     │   自写薄 FastAPI 壳，import 未修改的 pa_agent）
+面板「AI 参谋」页 ◀──AnalysisRecord──┘（诊断 + 决策建议 + 置信度 + 决策树）
+        人看建议 → 人决定（AI 永远不下单）
+```
+
+- 不修改 pa_agent 源码 = 无聚合修改义务；sidecar 代码独立成目录；依赖拖累（PyQt6/akshare 等）隔离在 sidecar venv
+- 决策 JSON 落新表 `ai_analysis`：与实际走势对比 = 长期评估 AI 参谋质量
+- 追问：FreeChatSession 锚定某次分析多轮对话
+- 明确预期：它不给工具调用/MCP（源码主动禁用）——"让 AI 操作引擎"不在其设计内，也不在我们规划内
+
+## 7.3 分期（D1~D6）
+
+| 期 | 内容 | 工作量 | 依赖 |
+|----|------|--------|------|
+| D1 交易中心 | 持仓管理（平仓/改SLTP，确认+重试）、引擎启停按钮、健康巡检条（YELLOW/RED + 每策略封锁详情） | ~1.5 天 | 无 |
+| D2 策略中心 | 策略池展示（发现/状态/changelog）+ 每策略 stats 卡（胜率/PF/连亏/盈亏曲线）+ 池编辑（改后重启生效）；热加载后置 | ~1.5 天 | 无 |
+| D3 回测中心 | 回测公共框架抽取（数据/口径/ex-riding/报告层）+ 作业 API（submit/status/results/history，**子进程执行**）+ 回测页（四口径 + 成本敏感性 + 权益/明细） | ~2.5 天 | 无 |
+| D4 AI 参谋 | pa_agent sidecar（独立 venv）+ 面板 AI 页 + `ai_analysis` 表 | ~2 天（sidecar 调试是主要变数） | LLM API key |
+| D5 日报/周报页 + 新闻日历 | journal 聚合日报；ForexFactory 抓取 + G1 接线 | ~1.5 天 | D1 |
+| D6 App 增强 | PWA 图标/安装提示 → TWA 套壳 APK（视需求） | ~1 天 | D1~D3 |
+
+**节奏**：D1、D2 先行（纯面板层）；D3 与影子运行并行；D4 等 LLM key 就位。全部完成后旧库 dashboard 即被完整替代。
+
+**手动开单的特殊纪律**（若启用）：面板开单 = 绕过策略门禁的"人的决定"，需显式开关 + 二次确认 + journal 标注 `manual`；默认关闭。
+
+## 7.4 明确不做（v3 重申）
+
+Vue/构建链、Tauri/PyInstaller 打包、自动更新器、策略上传端点、994 行翻译字典、客户端 TA 重实现、引擎嵌面板进程、AI 下单。
+
+## 变更记录
+
+| 版本 | 日期 | 变更 |
+|------|------|------|
+| v1.0 | 2026-10-02 | 初版：PWA 优先路线 |
+| v2.0 | 2026-10-03 | U1~U3 交付（FastAPI+HTMX+ECharts 三页面），Playwright 29 断言 |
+| v3.0 | 2026-10-03 | 用户裁定 v2 太简单；经旧库 dashboard 与 PA_Agent 深度探索，规划三大中心移植（D1~D3）+ PA_Agent sidecar 集成（D4，AGPL 合规路线）+ 日报/新闻/App 增强（D5~D6） |
