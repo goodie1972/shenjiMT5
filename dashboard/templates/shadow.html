@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card wide">
+  <h3>影子对照周报（最新）</h3>
+  {% if report %}<pre>{{ report }}</pre>
+  {% else %}暂无周报——运行 <code>python tools/weekly_shadow_report.py</code> 生成{% endif %}
+  <div class="sub">跟踪档：docs/promotions/m{30,15}_followave_promotion.md</div>
+</div>
+{% endblock %}

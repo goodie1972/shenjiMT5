@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="grid">
+  <div class="card wide">
+    <h3>近 24h 门禁拦截统计</h3>
+    {% if gate_stats %}
+    <table><tr><th>门禁</th><th>原因</th><th>次数</th></tr>
+      {% for g in gate_stats %}<tr><td>{{ g.gate }}</td><td>{{ g.reason }}</td><td>{{ g.count }}</td></tr>{% endfor %}
+    </table>
+    {% else %}无拦截记录{% endif %}
+  </div>
+  <div class="card wide">
+    <h3>信号（最近 {{ signals|length }} 条）</h3>
+    <table>
+      <tr><th>时间</th><th>策略</th><th>TF</th><th>方向</th><th>评分</th><th>状态</th><th>原因</th></tr>
+      {% for s in signals %}
+      <tr><td>{{ s.time }}</td><td>{{ s.strategy }}</td><td>{{ s.tf }}</td><td>{{ s.direction }}</td>
+          <td>{{ s.score }}</td><td>{{ s.status }}</td><td class="sub">{{ s.exit_reason }}</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+  <div class="card wide">
+    <h3>平仓成交（最近 {{ trades|length }} 笔）</h3>
+    <table>
+      <tr><th>平仓时间</th><th>策略</th><th>方向</th><th>手数</th><th>入场</th><th>出场</th><th>盈亏</th><th>来源</th><th>原因</th></tr>
+      {% for t in trades %}
+      <tr><td>{{ t.close }}</td><td>{{ t.strategy }}</td><td>{{ t.direction }}</td><td>{{ t.volume }}</td>
+          <td>{{ t.entry|round(2) if t.entry }}</td><td>{{ t.exit|round(2) if t.exit }}</td>
+          <td class="{{ 'up' if (t.pnl or 0) > 0 else ('down' if (t.pnl or 0) < 0 else '') }}">{{ t.pnl }}</td>
+          <td>{{ t.src }}</td><td>{{ t.reason }}</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+  <div class="card wide">
+    <h3>Journal 尾部（{{ journal|length }}）</h3>
+    <table>
+      <tr><th>ticket</th><th>策略</th><th>方向</th><th>盈亏</th><th>原因</th><th>close_ts</th></tr>
+      {% for j in journal %}
+      <tr><td>{{ j.position_ticket }}</td><td>{{ j.strategy }}</td><td>{{ j.direction }}</td>
+          <td>{{ j.pnl }}</td><td>{{ j.exit_reason }}</td><td>{{ j.close_ts }}</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</div>
+{% endblock %}

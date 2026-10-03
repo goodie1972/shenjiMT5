@@ -110,7 +110,8 @@
 - [x] **自动备份**：计划任务 ShenjiBackup（每日 20:00，journal/db/offset → ../shenjiMT5_backups，留 14 份）
 - [x] **周报自动化**：`tools/weekly_shadow_report.py`（MT5/MT4 对照表，晋升周记录直接粘贴）
 - [x] **运维手册**：`docs/OPERATIONS.md`
-- [ ] **告警推送**：用户裁定取消（只知晓不能处理徒增麻烦）→ 职能并入未来 App（见 UI_APP_PLAN）
+- [x] **监控面板 U1~U3**：`dashboard/`（FastAPI+HTMX 零构建链、纯只读三页面、PWA manifest、可选 token），脱离会话运行于 8800 端口。设计见 `docs/UI_APP_PLAN.md`
+- [ ] **告警推送**：用户裁定取消（只知晓不能处理徒增麻烦）→ 职能并入未来 App（App 内健康页，见 UI_APP_PLAN §5）
 - [ ] **回测公共框架抽取**：推迟到第二个策略移植时做（避免过早抽象）
 
 ### 任务（每策略重复）

@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0f1420">
+<link rel="manifest" href="/static/manifest.webmanifest">
+<title>神机 MT5 监控</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/htmx.min.js"></script>
+</head>
+<body>
+<nav>
+  <span class="brand">神机 MT5</span>
+  <a href="/" {% if active=='overview' %}class="on"{% endif %}>总览</a>
+  <a href="/flows" {% if active=='flows' %}class="on"{% endif %}>流水</a>
+  <a href="/shadow" {% if active=='shadow' %}class="on"{% endif %}>影子对照</a>
+</nav>
+<main>{% block content %}{% endblock %}</main>
+</body>
+</html>

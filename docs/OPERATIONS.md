@@ -7,6 +7,7 @@
 | 组件 | 方式 | 存活检查 |
 |------|------|----------|
 | 引擎（smoke + m15/m30_followave，demo） | 脱离会话进程（supervisor 14 天，至 10-17） | `logs/heartbeat.txt` mtime < 2 分钟 |
+| 监控面板（只读，端口 8800） | 脱离会话进程 `tools/run_dashboard.py` | `curl http://127.0.0.1:8800/api/overview` |
 | ShenjiWatchdog（计划任务，每 5 分钟） | 心跳陈旧且无进程 → 自动拉起 | `schtasks /Query /TN ShenjiWatchdog` |
 | ShenjiBackup（计划任务，每日 20:00） | 打包 journal/db/offset → `../shenjiMT5_backups/`（留 14 份） | 看备份目录新文件 |
 

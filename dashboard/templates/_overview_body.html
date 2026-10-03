@@ -1,0 +1,43 @@
+<div class="grid">
+  <div class="card">
+    <h3>引擎</h3>
+    {% if engine.alive %}<span class="dot ok"></span>存活（心跳 {{ engine.age_s }}s 前）
+    {% else %}<span class="dot bad"></span>失联（{{ engine.age_s or '?' }}s 无心跳）{% endif %}
+    <div class="sub">市场 {% if market_open %}开市{% else %}休市{% endif %}</div>
+  </div>
+  <div class="card">
+    <h3>账户</h3>
+    {% if account %}
+      {{ account.balance|round(2) }} {{ account.currency }}（净值 {{ account.equity|round(2) }}）
+      <div class="sub">{{ account.server }} ｜ {{ account.margin_mode_name }}</div>
+    {% else %}<span class="bad">终端不可达</span>{% endif %}
+  </div>
+  <div class="card">
+    <h3>已实现盈亏</h3>
+    今日 <b class="{{ 'up' if (pnl.day or 0) > 0 else ('down' if (pnl.day or 0) < 0 else '') }}">{{ (pnl.day or 0)|round(2) }}</b>
+    ｜ 本周 <b class="{{ 'up' if (pnl.week or 0) > 0 else ('down' if (pnl.week or 0) < 0 else '') }}">{{ (pnl.week or 0)|round(2) }}</b>
+  </div>
+  <div class="card">
+    <h3>持仓（{{ positions|length }}）</h3>
+    {% if positions %}
+    <table>
+      <tr><th>策略</th><th>方向</th><th>手数</th><th>开仓价</th><th>浮盈</th><th>时长</th></tr>
+      {% for p in positions %}
+      <tr><td>{{ p.strategy }}</td><td>{{ p.type }}</td><td>{{ p.volume }}</td>
+          <td>{{ p.price_open|round(2) }}</td>
+          <td class="{{ 'up' if p.profit > 0 else ('down' if p.profit < 0 else '') }}">{{ p.profit|round(2) }}</td>
+          <td>{{ p.hold_min }}min</td></tr>
+      {% endfor %}
+    </table>
+    {% else %}无持仓{% endif %}
+  </div>
+  <div class="card wide">
+    <h3>风控门禁 G0~G15</h3>
+    <table class="gates">
+      {% for g in risk %}
+      <tr><td><span class="dot {{ 'ok' if g.state=='放行' else ('bad' if g.state=='拦截' else 'na') }}"></span>{{ g.id }}</td>
+          <td>{{ g.name }}</td><td>{{ g.state }}</td><td class="sub">{{ g.detail }}</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</div>
