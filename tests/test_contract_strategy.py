@@ -123,6 +123,17 @@ class TestSixTupleContract:
         with pytest.raises(TypeError):
             s.on_tick()
 
+    def test_none_return_is_no_signal(self):
+        """契约 S-1 v1.2：None = 无信号（旧库策略习惯），on_tick 不得误杀。"""
+        class NoneStrategy(BaseStrategy):
+            name = "none_strat"
+            def generate_signal(self):
+                return None
+        s = NoneStrategy(magic=1, timeframe="M30",
+                         data_provider=make_provider(make_candles(), {"rsi": 25}))
+        assert s.on_tick() is None
+        assert s._last_signal is None
+
 
 class TestLifecycleHooks:
     """§5 退出钩子存在且默认安全。"""

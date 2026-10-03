@@ -210,6 +210,32 @@ class TestExits:
         assert s.check_ema20_exit(p, 1989, 1989.2) is False  # 同 bar 二次调用冻结
 
 
+class TestOnTickPath:
+    """回归：移植策略必须能走完引擎 on_tick 全路径（影子运行曾暴露 None 被误杀）。"""
+
+    def _engine_ready(self, cls, ind):
+        s = cls(magic=661402, timeframe="M30")
+        s.data_provider = lambda tf, count: {"candles": mk(), "indicators": dict(ind)}
+        return s
+
+    def test_no_signal_returns_none_without_error(self):
+        ind = dict(IND, stoch_k_prev=60.0)      # 非穿越 → generate_signal 返回 None
+        s = self._engine_ready(FollowAveCore, ind)
+        assert s.on_tick() is None              # v1.1 会在这里抛 TypeError
+        assert s._last_signal is None
+
+    def test_signal_stored_via_on_tick(self):
+        s = self._engine_ready(FollowAveCore, IND)
+        assert s.on_tick() == "Signal: BUY"
+        assert s._last_signal["signal"] == "BUY"
+        assert s._last_signal["factors_long"] == ["FOLLOWAVE-LONG"]
+
+    def test_insufficient_candles_via_provider(self):
+        s = FollowAveCore(magic=661402, timeframe="M30")
+        s.data_provider = lambda tf, count: {"candles": mk(15), "indicators": dict(IND)}
+        assert s.on_tick() is None              # <10 根守卫（15 根够 on_tick 但 <30 由策略返回 None）
+
+
 class TestSLTP:
     def test_wide_fallback(self):
         s = make_strat(FollowAveCore)

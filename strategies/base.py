@@ -126,6 +126,10 @@ class BaseStrategy(abc.ABC):
             logger.warning("[%s] K 线不足: %d", self.name, len(self.candles))
             return None
         result = self.generate_signal()
+        if result is None:
+            return None                      # 无信号（契约 S-1 v1.2：None 合法）
+        if not isinstance(result, tuple) or len(result) < 6:
+            raise TypeError(f"[{self.name}] generate_signal 必须返回六元组或 None（契约 S-1）")
         if not isinstance(result, tuple) or len(result) < 6:
             raise TypeError(f"[{self.name}] generate_signal 必须返回六元组（契约 S-1）")
         signal = result[0]

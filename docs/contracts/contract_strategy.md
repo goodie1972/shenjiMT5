@@ -22,16 +22,19 @@ __init__(magic, timeframe)
     → 平仓 → [引擎回调] register_trade_result（风控状态突变）
 ```
 
-## 2. 信号六元组（S-1）
+## 2. 信号六元组（S-1，v1.2）
 
-`generate_signal()` 必须返回：
+`generate_signal()` 必须返回**六元组或 `None`**：
 
 ```python
-tuple[Optional[OrderType], int, int, list[str], list[str], dict]
-#     signal                long  short factors_long factors_short indicator_values
+tuple[Optional[OrderType], int, int, list[str], list[str], dict]   # 正常路径
+None                                                               # 无信号（v1.2 合法，等价于六元组 signal=None）
 # 可选第 7 项：confidence（float），引擎写入 signals 表
 ```
 
+- `None` 是旧库策略的自然习惯（FollowAve 等移植代码无信号时返回 None），
+  v1.1 及之前"必须六元组"的表述会在 on_tick 层误杀 None 返回——v1.2 修正，
+  引擎 `on_tick` 对 None 直接跳过本 tick。
 - `signal`：`BUY` / `SELL` / `None`。策略**只表达方向意图**，不指定手数/夹板价（手数由配置，价格由 Athlete 用实时 tick）。
 - `factors_*`：人类可读因子字符串列表（进 journal，供复盘归因）。
 - `indicator_values`：JSON 可序列化 dict（进 signals 表与 journal 快照）。
@@ -116,3 +119,4 @@ fractal_upper, fractal_lower
 |------|------|------|
 | v1.0 | 2026-10-02 | 初版：自旧库 base.py v2 + 实盘审计结论重新表述 |
 | v1.1 | 2026-10-02 | 白名单补充键新增 `bb_mid`（BB 中轨单值；指标引擎实现时经三处同步登记） |
+| v1.2 | 2026-10-03 | S-1 明确 `None` 为合法返回（无信号）——影子运行实测暴露：旧库策略无信号返回 None，v1.1 表述会在 on_tick 误杀（fail-safe 兜住未崩引擎，但策略零信号） |
