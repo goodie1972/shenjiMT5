@@ -44,6 +44,8 @@ def setup_logging(level=logging.INFO):
 def main() -> int:
     parser = argparse.ArgumentParser(description="神机 MT5 引擎（demo）")
     parser.add_argument("--smoke", action="store_true", help="启用 smoke 冒烟策略池")
+    parser.add_argument("--followave", action="store_true",
+                        help="启用 m15/m30_followave（M3 影子运行，demo 0.01 手）")
     parser.add_argument("--force", action="store_true", help="启动后立即强制全扫描一次")
     parser.add_argument("--duration", type=int, default=0, help="运行秒数（0=常驻）")
     parser.add_argument("--mode", default="demo", choices=["demo"])
@@ -54,8 +56,11 @@ def main() -> int:
     pool: dict[str, dict] = {}
     if args.smoke:
         pool["smoke"] = {"magic": 661901, "timeframe": "M5"}
+    if args.followave:
+        pool["m15_followave"] = {"magic": 661401, "timeframe": "M15"}
+        pool["m30_followave"] = {"magic": 661402, "timeframe": "M30"}
     if not pool:
-        parser.error("当前仅支持 --smoke 策略池（正式策略 M2 起接入）")
+        parser.error("需要至少一个策略池开关（--smoke / --followave）")
 
     client = MT5Client()
     engine = Engine(client, pool=pool, mode=args.mode)

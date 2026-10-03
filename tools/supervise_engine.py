@@ -21,6 +21,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 def main() -> int:
     parser = argparse.ArgumentParser(description="引擎监督器")
     parser.add_argument("--smoke", action="store_true")
+    parser.add_argument("--followave", action="store_true",
+                        help="透传给引擎（M3 影子运行）")
     parser.add_argument("--duration", type=int, default=0, help="总运行秒数（0=常驻）")
     parser.add_argument("--max-restarts", type=int, default=20)
     args = parser.parse_args()
@@ -35,6 +37,8 @@ def main() -> int:
         cmd = [sys.executable, os.path.join(REPO_ROOT, "tools", "run_engine.py")]
         if args.smoke:
             cmd.append("--smoke")
+        if args.followave:
+            cmd.append("--followave")
         if remaining is not None:
             cmd += ["--duration", str(int(remaining))]
         print(f"[supervisor] 启动引擎: {' '.join(cmd[1:])} (restarts={restarts})")
