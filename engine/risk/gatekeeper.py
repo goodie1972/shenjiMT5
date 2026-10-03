@@ -160,6 +160,21 @@ def g3_global_daily_loss(ctx: dict) -> GateResult:
     return GateResult(False, "G3")
 
 
+def g3b_weekly_drawdown(ctx: dict) -> GateResult:
+    """G3b（v1.1）周回撤熔断：当周已实现亏损 ≥ 15% 余额 → 全局停开新仓，
+    下周一 UTC 00:00 自动解除（当周起点 = UTC 周一 00:00）。"""
+    week_pnl = ctx.get("week_realized_pnl")
+    balance = ctx.get("balance")
+    if week_pnl is None or not balance:
+        return GateResult(False, "G3b")
+    dd = -week_pnl / balance * 100
+    if week_pnl < 0 and dd >= P["weekly_max_drawdown_pct"]:
+        return GateResult(True, "G3b",
+                          f"周回撤 {dd:.1f}% ≥ {P['weekly_max_drawdown_pct']}%"
+                          "（下周一 UTC 00:00 自动解除）")
+    return GateResult(False, "G3b")
+
+
 def g4_account_floating_loss(ctx: dict) -> GateResult:
     floating = ctx.get("strategy_floating_pnl")
     balance = ctx.get("balance")
@@ -224,6 +239,14 @@ def g9_max_positions(ctx: dict) -> GateResult:
     if limit is not None and n_open >= limit:
         return GateResult(True, "G9", f"并发 {n_open}/{limit}")
     return GateResult(False, "G9")
+
+
+def g9b_account_max_positions(ctx: dict) -> GateResult:
+    """G9b（v1.1）账户级并发总闸：全部策略合计持仓 ≥ max_total_positions → 拦截。"""
+    total = ctx.get("n_total_positions", 0)
+    if total >= P["max_total_positions"]:
+        return GateResult(True, "G9b", f"账户并发 {total}/{P['max_total_positions']}")
+    return GateResult(False, "G9b")
 
 
 def g10_same_dir_float_loss(ctx: dict) -> GateResult:
@@ -309,12 +332,14 @@ GATES: list[GateFn] = [
     g1_news_blackout,          # G1  新闻黑屏（日历未配置=放行+告警）
     g2_news_bias,              # G2  新闻偏向封锁（配置默认关）
     g3_global_daily_loss,      # G3  全局日亏硬停
+    g3b_weekly_drawdown,       # G3b 周回撤熔断（v1.1）
     g4_account_floating_loss,  # G4 账户级浮亏
     g5_market_open,            # G5  市场开市
     g6_state_blocks,           # G6a/G6b 实亏封锁
     g7_consecutive_loss,       # G7  连亏封锁
     g8_rapid_exit,             # G8  急速出场封锁
     g9_max_positions,          # G9  并发上限
+    g9b_account_max_positions, # G9b 账户级并发总闸（v1.1）
     g10_same_dir_float_loss,   # G10 同向浮亏禁加仓
     g11_profit_exit_cooldown,  # G11 盈利平仓同向冷却
     g12_strategy_kline_gate,   # G12 K 线门禁（宿主在策略）

@@ -101,11 +101,23 @@
 
 **目标**：其余策略按需逐个走"移植 → demo → 实盘小仓"晋升管道，每策略一份晋升清单。
 
+### 实盘前基建（2026-10-03 补齐，晋升 T3.fa.4 的前置条件）
+
+- [x] **成本敏感性分析**：六档点差 × 四口径——可承受点差 ≈ $0.50/oz（现实 $0.20~0.40 下四口径全正）。报告 `backtest/reports/followave_cost_sensitivity.md`
+- [x] **契约 risk v1.1**：G3b 周回撤熔断（15%，周一 UTC 自动解除）+ G9b 账户级并发总闸（6）——补上"账户总敞口"风控缺口
+- [x] **实盘物理隔离**：三重确认（ALLOW_LIVE + live_confirm.txt + SHENJI_LIVE=1），缺一不启
+- [x] **看门狗**：计划任务 ShenjiWatchdog（每 5 分钟，心跳陈旧自动拉起）+ 引擎心跳文件
+- [x] **自动备份**：计划任务 ShenjiBackup（每日 20:00，journal/db/offset → ../shenjiMT5_backups，留 14 份）
+- [x] **周报自动化**：`tools/weekly_shadow_report.py`（MT5/MT4 对照表，晋升周记录直接粘贴）
+- [x] **运维手册**：`docs/OPERATIONS.md`
+- [ ] **告警推送**：用户裁定取消（只知晓不能处理徒增麻烦）→ 职能并入未来 App（见 UI_APP_PLAN）
+- [ ] **回测公共框架抽取**：推迟到第二个策略移植时做（避免过早抽象）
+
 ### 任务（每策略重复）
 
 - [x] T3.fa.1 FollowAve 移植 + 契约测试通过 + 四口径 PASS（M2 交付）
-- [ ] T3.fa.2 FollowAve demo ≥2 周影子运行——**2026-10-03 启动**（demo 引擎挂载 m15/m30_followave，与 MT4 实盘同窗；supervisor 14 天），跟踪档 `docs/promotions/m{30,15}_followave_promotion.md`
-- [ ] T3.fa.3 晋升清单核验（影子运行满 2 周后）
+- [ ] T3.fa.2 FollowAve demo ≥2 周影子运行——**2026-10-03 启动**（demo 引擎挂载 m15/m30_followave，与 MT4 实盘同窗；supervisor 14 天 + 看门狗），跟踪档 `docs/promotions/m{30,15}_followave_promotion.md`，周报 `tools/weekly_shadow_report.py`
+- [ ] T3.fa.3 晋升清单核验（影子运行满 2 周后；增加"有效点差 ≤ $0.50"核验项）
 - [ ] T3.fa.4 FollowAve 实盘小仓上线，观察 2 周写复盘
 - [ ] T3.x 其余策略按需逐个走同样管道
 

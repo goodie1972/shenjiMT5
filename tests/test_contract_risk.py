@@ -24,6 +24,8 @@ class TestRiskParamsLocked:
     def test_risk_params_locked(self):
         locked = {
             "max_daily_loss_pct": 12.0,
+            "weekly_max_drawdown_pct": 15.0,
+            "max_total_positions": 6,
             "per_strategy_max_positions": 1,
             "floating_loss_warn_pct": 5.0,
             "floating_loss_block_pct": 10.0,
@@ -186,6 +188,21 @@ class TestGateEvaluation:
         r = gk.g3_global_daily_loss(self._ctx(day_realized_pnl=-1_300.0))
         assert r.blocked and r.gate_id == "G3"
 
+    def test_g3b_weekly_drawdown(self):
+        """T-G3b：周亏 ≥15% 熔断；回正或下周一自动解除由时间天然处理。"""
+        r = gk.g3b_weekly_drawdown(self._ctx(week_realized_pnl=-1_600.0))
+        assert r.blocked and r.gate_id == "G3b"       # 16% ≥ 15%
+        r2 = gk.g3b_weekly_drawdown(self._ctx(week_realized_pnl=-1_400.0))
+        assert r2.blocked is False                    # 14% < 15%
+        r3 = gk.g3b_weekly_drawdown(self._ctx(week_realized_pnl=100.0))
+        assert r3.blocked is False                    # 盈利周不触发
+
+    def test_g9b_account_total_positions(self):
+        """T-G9b：账户合计 6 仓 → 拦截。"""
+        r = gk.g9b_account_max_positions(self._ctx(n_total_positions=6))
+        assert r.blocked and r.gate_id == "G9b"
+        assert gk.g9b_account_max_positions(self._ctx(n_total_positions=5)).blocked is False
+
     def test_g9_blocks_at_limit(self):
         r = gk.g9_max_positions(self._ctx(n_open_positions=1))
         assert r.blocked and r.gate_id == "G9"
@@ -254,7 +271,9 @@ class TestGateEvaluation:
         assert result.blocked and result.gate_id == "G0"
 
     def test_gate_order_is_contract_order(self):
-        """表顺序不可重排（契约 §1）：G0 第一、G11 之后不得插账户级门禁。"""
+        """表顺序不可重排（契约 §1）：G0 第一、G3b 随 G3、G9b 随 G9。"""
         names = [fn.__name__ for fn in gk.GATES]
         assert names[0] == "g0_safety_lock"
-        assert names.index("g9_max_positions") < names.index("g10_same_dir_float_loss")
+        assert names.index("g3b_weekly_drawdown") == names.index("g3_global_daily_loss") + 1
+        assert names.index("g9_max_positions") < names.index("g9b_account_max_positions")
+        assert names.index("g9b_account_max_positions") < names.index("g10_same_dir_float_loss")

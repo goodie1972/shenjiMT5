@@ -48,8 +48,18 @@ def main() -> int:
                         help="启用 m15/m30_followave（M3 影子运行，demo 0.01 手）")
     parser.add_argument("--force", action="store_true", help="启动后立即强制全扫描一次")
     parser.add_argument("--duration", type=int, default=0, help="运行秒数（0=常驻）")
-    parser.add_argument("--mode", default="demo", choices=["demo"])
+    parser.add_argument("--mode", default="demo", choices=["demo", "live"])
     args = parser.parse_args()
+
+    if args.mode == "live":
+        # 实盘物理隔离（D9）：三重确认缺一不可
+        if not settings.ALLOW_LIVE:
+            parser.error("实盘被拒：settings.ALLOW_LIVE = False（修改配置是刻意的第一步）")
+        if not os.path.exists(settings.LIVE_CONFIRM_PATH):
+            parser.error(f"实盘被拒：缺少确认文件 {settings.LIVE_CONFIRM_PATH}")
+        if os.environ.get("SHENJI_LIVE") != "1":
+            parser.error("实盘被拒：缺少环境变量 SHENJI_LIVE=1")
+        print("!! LIVE MODE —— 真金白银 !!")
 
     setup_logging()
 

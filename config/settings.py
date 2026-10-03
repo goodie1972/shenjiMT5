@@ -30,6 +30,14 @@ LOG_DIR = os.path.join(REPO_ROOT, "logs")
 SAFETY_LOCK_PATH = os.path.join(REPO_ROOT, "config", "safety_lock.txt")
 SERVER_OFFSET_PATH = os.path.join(DATA_DIR, "server_offset.json")
 
+# ── 实盘物理隔离（D9）────────────────────────────────────────
+# 上实盘需要三重确认，缺一不可（防手滑烧真钱）：
+#   1. 本开关改为 True（改代码 = 刻意行为）
+#   2. 创建确认文件 config/live_confirm.txt（已 gitignore）
+#   3. 启动环境变量 SHENJI_LIVE=1
+ALLOW_LIVE = False
+LIVE_CONFIRM_PATH = os.path.join(REPO_ROOT, "config", "live_confirm.txt")
+
 # ── 时区（D1：只用于显示层）──────────────────────────────────
 LOCAL_TZ = timezone(timedelta(hours=8))
 _UTC = timezone.utc
@@ -53,6 +61,8 @@ def local_dt(ts: float) -> datetime:
 # ── 风控参数（contract_risk.md §2 锁定值，勿在此直接改值）────
 RISK_PARAMS = {
     "max_daily_loss_pct":                12.0,
+    "weekly_max_drawdown_pct":           15.0,   # v1.1：周回撤熔断（周一 UTC 自动解除）
+    "max_total_positions":               6,      # v1.1：账户级并发总闸
     "per_strategy_max_positions":        1,
     "floating_loss_warn_pct":            5.0,
     "floating_loss_block_pct":           10.0,

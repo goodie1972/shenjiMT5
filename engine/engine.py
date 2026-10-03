@@ -219,9 +219,11 @@ class Engine:
             "now": settings.utc_now(),
             "balance": balance,
             "day_realized_pnl": self._day_realized_pnl(),
+            "week_realized_pnl": self._week_realized_pnl(),
             "strategy_floating_pnl": sum(p["profit"] for p in mine),
             "risk_state": state,
             "n_open_positions": len(mine),
+            "n_total_positions": len(positions),
             "max_positions": settings.RISK_PARAMS["per_strategy_max_positions"],
             "same_dir_floating_pnl": sum(p["profit"] for p in same_dir),
             "profit_exit_cooldown_until": self.profit_cooldown.get(
@@ -447,14 +449,26 @@ class Engine:
 
     def _day_realized_pnl(self) -> float:
         midnight = int(settings.utc_now()) // 86400 * 86400
+        return self._sum_closed_pnl_since(midnight)
+
+    def _week_realized_pnl(self) -> float:
+        """当周已实现盈亏（周起点 = UTC 周一 00:00，G3b 周回撤熔断口径）。"""
+        import datetime as _dt
+        now = settings.utc_now()
+        today_midnight = int(now) // 86400 * 86400
+        weekday = _dt.datetime.fromtimestamp(now, tz=_dt.timezone.utc).weekday()  # Mon=0
+        week_start = today_midnight - weekday * 86400
+        return self._sum_closed_pnl_since(week_start)
+
+    def _sum_closed_pnl_since(self, since_ts: int) -> float:
         try:
             ro = db.readonly_connect(self.db_path)
             try:
                 row = ro.execute("SELECT COALESCE(SUM(pnl),0) FROM trades"
-                                 " WHERE close_ts >= ?", (midnight,)).fetchone()
+                                 " WHERE close_ts >= ?", (since_ts,)).fetchone()
                 return float(row[0])
             finally:
                 ro.close()
         except Exception:
-            logger.exception("[engine] 日内盈亏查询失败（fail-closed 记 0 并告警）")
+            logger.exception("[engine] 盈亏查询失败（fail-closed 记 0 并告警）")
             return 0.0

@@ -46,7 +46,7 @@ class Trade:
     ticket: str = ""                 # 出场状态键（= mark_extreme_entry 的键）
     exit_idx: int = -1
     exit_price: float = 0.0
-    pnl: float = 0.0                 # 混合值（分批 + 剩余）
+    pnl: float = 0.0                 # 混合值（分批 + 剩余，已扣成本）
     reason: str = ""
     partial_done: bool = False
     fills: list = field(default_factory=list)   # [(idx, price, frac)]
@@ -89,8 +89,13 @@ def _ind_at(s: dict, i: int) -> dict:
             "atr": v("atr"), "bb_mid_direction": s["mid_dir"][i]}
 
 
-def run_backtest(df: pd.DataFrame, strategy_cls, label: str) -> dict:
-    """bar 级事件循环：直接驱动移植策略代码。"""
+def run_backtest(df: pd.DataFrame, strategy_cls, label: str,
+                 spread: float = 0.0) -> dict:
+    """bar 级事件循环：直接驱动移植策略代码。
+
+    spread：往返成本（$/oz，0.01 lot = 1 oz → 每笔扣 spread $）。
+    每笔一次往返（分批出场不增加成本——全部 oz 最终各穿越一次点差）。
+    """
     s = df.reset_index(drop=True)
     opens = s["open"].to_numpy()
     highs = s["high"].to_numpy()
@@ -120,10 +125,11 @@ def run_backtest(df: pd.DataFrame, strategy_cls, label: str) -> dict:
         t.exit_idx = exit_idx
         t.exit_price = exit_price
         sign = 1.0 if t.direction == "BUY" else -1.0
-        # 混合 PnL：已成交的分批 + 剩余（0.01 lot = 1 oz）
+        # 混合 PnL：已成交的分批 + 剩余（0.01 lot = 1 oz），扣往返成本
         booked = sum((p - t.entry_price) * sign * LOT_OZ * f for _, p, f in t.fills)
         remain_frac = 1.0 - sum(f for _, _, f in t.fills)
-        t.pnl = round(booked + (exit_price - t.entry_price) * sign * LOT_OZ * remain_frac, 2)
+        t.pnl = round(booked + (exit_price - t.entry_price) * sign * LOT_OZ * remain_frac
+                      - spread * LOT_OZ, 2)
         t.reason = reason
         trades.append(t)
 
@@ -205,13 +211,22 @@ def summarize(trades: list[Trade], times: np.ndarray, label: str) -> dict:
     }
 
 
+SPREAD_SWEEP = [0.0, 0.10, 0.20, 0.30, 0.40, 0.50]   # $/oz 往返（0.01 lot 每笔 $）
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="FollowAve 四口径回测")
     parser.add_argument("--repro-days", type=int, default=180)
     parser.add_argument("--symbol", default="XAUUSD")
+    parser.add_argument("--spread", type=float, default=0.0,
+                        help="往返成本 $/oz（0.01 lot 每笔扣 spread $）")
+    parser.add_argument("--cost-sweep", action="store_true",
+                        help="成本敏感性扫描：六档点差 × 四口径")
     parser.add_argument("--dump-trades", default="", help="可复现窗口交易明细 CSV 输出路径")
     parser.add_argument("--out", default=os.path.join(
         REPO_ROOT, "backtest", "reports", "followave_four_gate_report.md"))
+    parser.add_argument("--sweep-out", default=os.path.join(
+        REPO_ROOT, "backtest", "reports", "followave_cost_sensitivity.md"))
     args = parser.parse_args()
 
     _last_trades: list = []
@@ -220,37 +235,45 @@ def main() -> int:
     m30_mod = importlib.import_module("strategies.20261002_m30_followave_v1")
     m15_mod = importlib.import_module("strategies.20261002_m15_followave_v1")
 
-    results, rows = [], []
-    all_pass = True
+    # 四口径配置构建一次，主报告与成本扫描共用
+    configs = []
     for tf, mod in (("M30", m30_mod), ("M15", m15_mod)):
         df = load_ohlcv(args.symbol, tf)
         last_ts = int(df["time"].iloc[-1])
         repro_start = last_ts - args.repro_days * 86400
-        for window, wdf in (("全样本", df),
-                            (f"可复现{args.repro_days}d", df[df["time"] >= repro_start])):
-            label = f"{tf}-{window}"
-            r, trades = run_backtest(wdf.copy(), _cls_of(mod), label)
-            if tf == "M30" and window.startswith("可复现"):
-                _last_trades.extend(trades)     # 供 real-tick 抽样验证
-            results.append(r)
-            cls_name = tf
-            rows.append(f"| {cls_name} | {window} | {r['n_trades']} | {r['n_kept']} "
-                        f"| {r['n_riders']} | {r['net']} | {r['pf']} | {r['winrate']}% "
-                        f"| {r['top5']} |")
-            if r["net"] <= 0:
-                all_pass = False
+        configs.append((tf, "全样本", df))
+        configs.append((tf, f"可复现{args.repro_days}d", df[df["time"] >= repro_start]))
+
+    if args.cost_sweep:
+        return _run_cost_sweep(configs, args)
+
+    results, rows = [], []
+    all_pass = True
+    for tf, window, wdf in configs:
+        mod = m30_mod if tf == "M30" else m15_mod
+        label = f"{tf}-{window}"
+        r, trades = run_backtest(wdf.copy(), _cls_of(mod), label, spread=args.spread)
+        if tf == "M30" and window.startswith("可复现"):
+            _last_trades.extend(trades)     # 供 real-tick 抽样验证
+        results.append(r)
+        rows.append(f"| {tf} | {window} | {r['n_trades']} | {r['n_kept']} "
+                    f"| {r['n_riders']} | {r['net']} | {r['pf']} | {r['winrate']}% "
+                    f"| {r['top5']} |")
+        if r["net"] <= 0:
+            all_pass = False
 
     header = ("| 周期 | 窗口 | 总笔数 | 剔骑单后 | 骑单 | 主口径净利 | PF | 胜率 |"
               " Top5 净利 |\n|----|----|------|--------|------|----------|----|----|"
               "------|")
+    cost_note = f"含成本 {args.spread}$/oz/笔" if args.spread else "无成本建模"
     verdict = "PASS（四口径同向为正）" if all_pass else "FAIL（存在非正口径，不入池）"
     report = "\n".join([
         "# FollowAve 四口径回测报告（MT5 数据）",
         "",
-        f"- 生成：{pd.Timestamp.utcnow().isoformat()}（UTC）",
+        f"- 生成：{pd.Timestamp.now(tz='UTC').isoformat()}",
         f"- 数据：L2 研究层 {args.symbol} M15/M30（见 manifest sha256）",
         f"- 口径：信号 bar1 → 下一开盘成交；出场 bar1 评估 → 下一开盘；宽止损 bar 内"
-        f" SL-first；ex-riding 4h；PnL $/0.01lot=1oz；无点差；G15 不模拟（乐观上限）",
+        f" SL-first；ex-riding 4h；PnL $/0.01lot=1oz；{cost_note}；G15 不模拟（乐观上限）",
         f"- 策略：移植自旧库 v1.6，参数零改动（见 strategies/followave_core.py 血统注）",
         "",
         header, *rows, "",
@@ -276,6 +299,53 @@ def main() -> int:
     print(f"\n{verdict}")
     print(f"报告 → {args.out}")
     return 0 if all_pass else 1
+
+
+def _run_cost_sweep(configs, args) -> int:
+    """成本敏感性：六档点差 × 四口径。主口径 = ex-riding 后净利（已扣成本）。"""
+    import importlib
+    lines = [
+        "# FollowAve 成本敏感性报告",
+        "",
+        f"- 生成：{pd.Timestamp.now(tz='UTC').isoformat()}",
+        "- 成本模型：每笔往返扣 spread $（0.01 lot = 1 oz）；分批出场不重复计费",
+        "- XAUUSD 现实点差参考：主流经纪商 $0.20~0.40/oz 往返",
+        "",
+        "| 口径 | " + " | ".join(f"{s:.2f}" for s in SPREAD_SWEEP) + " |",
+        "|----|" + "----|" * len(SPREAD_SWEEP),
+    ]
+    nets_by_config = []
+    for tf, window, wdf in configs:
+        mod = importlib.import_module(
+            "strategies.20261002_m30_followave_v1" if tf == "M30"
+            else "strategies.20261002_m15_followave_v1")
+        nets = []
+        for spread in SPREAD_SWEEP:
+            r, _ = run_backtest(wdf.copy(), _cls_of(mod), f"{tf}-{window}", spread=spread)
+            nets.append(r["net"])
+        nets_by_config.append((tf, window, nets))
+        lines.append(f"| {tf} {window} | " + " | ".join(f"{v:g}" for v in nets) + " |")
+
+    # 可承受最大点差 = 六档中最后一个使四口径全正的点差
+    survive = None
+    for idx, spread in enumerate(SPREAD_SWEEP):
+        if all(nets[idx] > 0 for _, _, nets in nets_by_config):
+            survive = spread
+    lines += ["", "## 结论", ""]
+    if survive is None:
+        lines.append("- **无任何点差档位四口径全正——策略在成本下不可存活，禁止晋升实盘**")
+    else:
+        lines += [
+            f"- 四口径全正可承受的最大点差 ≈ **${survive:.2f}/oz 往返**（含该档）",
+            f"- 晋升门槛：实盘经纪商有效点差（含滑点）需 < ${survive:.2f}；"
+            f"超出则本策略在该账户上无利可图",
+        ]
+    os.makedirs(os.path.dirname(args.sweep_out), exist_ok=True)
+    with open(args.sweep_out, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    print("\n".join(lines))
+    print(f"报告 → {args.sweep_out}")
+    return 0
 
 
 def _cls_of(mod):

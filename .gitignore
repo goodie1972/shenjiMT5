@@ -3,6 +3,7 @@ data/
 logs/
 tmp/
 config/safety_lock.txt
+config/live_confirm.txt
 
 # ── AI 会话产物不入库 ──
 .zcode/
