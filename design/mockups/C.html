@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<!-- 方案 C「侧边栏专业型」 — tokens: docs/DESIGN_SYSTEM.md §2.3 ｜ GitHub Dark 家族/左侧栏 208px/6px 栅格 -->
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>样稿 C · 侧边栏专业型 — 神机 MT5</title>
+<script src="../../dashboard/static/echarts.min.js"></script>
+<style>
+:root{--bg:#0d1117;--sidebar:#010409;--panel:#161b22;--panel2:#1c2129;--line:#30363d;--fg:#e6edf3;--strong:#f0f6fc;--sub:#8b949e;--accent:#58a6ff;--accent2:#d2a8ff;--up:#3fb950;--down:#f85149;--warn:#d29922}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 "Segoe UI","Microsoft YaHei",sans-serif;display:flex;min-height:100vh}
+.mono{font-family:"Cascadia Mono",Consolas,monospace}
+/* 侧栏 */
+.side{width:208px;background:var(--sidebar);border-right:1px solid var(--line);display:flex;flex-direction:column;flex-shrink:0}
+.side .brand{padding:16px 18px;font-weight:800;color:var(--strong);border-bottom:1px solid var(--line)}
+.side .brand span{color:var(--accent)}
+.side nav{padding:10px 8px;flex:1}
+.side nav a{display:flex;align-items:center;gap:10px;color:var(--sub);text-decoration:none;padding:8px 12px;border-radius:6px;font-size:13px;margin-bottom:2px}
+.side nav a.on{background:#1c2536;color:var(--strong)}
+.side nav a.on .ic{color:var(--accent)}
+.side nav .ic{width:18px;text-align:center}
+.side .foot{padding:12px 18px;border-top:1px solid var(--line);color:var(--sub);font-size:12px}
+/* 主区 */
+.wrap{flex:1;display:flex;flex-direction:column;min-width:0}
+.topbar{display:flex;align-items:center;gap:16px;height:46px;padding:0 18px;border-bottom:1px solid var(--line);background:#0a0d12}
+.topbar .tick b{color:var(--strong)}
+.topbar .badge{margin-left:auto;font-size:12px;color:var(--up);border:1px solid rgba(63,185,80,.4);border-radius:20px;padding:3px 12px}
+.topbar .clock{color:var(--sub);font-size:12px}
+main{padding:16px 18px}
+.ptitle{display:flex;align-items:baseline;gap:14px;margin-bottom:14px}
+.ptitle h1{font-size:20px;margin:0}
+.ptitle .sub{color:var(--sub);font-size:12px}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:12px 14px}
+.kpi .l{color:var(--sub);font-size:12px}
+.kpi .v{font-size:24px;font-weight:600;font-family:"Cascadia Mono",Consolas,monospace}
+.grid{display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:12px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px}
+.panel h3{margin:0 0 10px;font-size:13px;color:var(--sub);text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+.chart{height:340px}.charts{height:230px}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{text-align:left;padding:7px 9px;border-bottom:1px solid var(--line)}
+th{color:var(--sub);font-weight:600;font-size:12px}
+tr:hover td{background:#141a22}
+.up{color:var(--up)}.down{color:var(--down)}
+.rows{display:flex;flex-direction:column;gap:10px}
+.strow{display:flex;align-items:center;gap:10px;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:10px 12px}
+.strow .nm{font-weight:700;color:var(--strong);flex:1}
+.strow .st{font-size:12px;color:var(--sub)}
+.pill{font-size:11px;padding:2px 8px;border-radius:12px;border:1px solid var(--line);color:var(--sub)}
+.pill.ok{color:var(--up);border-color:rgba(63,185,80,.4)}
+.pill.bad{color:var(--down);border-color:rgba(248,81,73,.4)}
+.pill.ai{color:var(--accent2);border-color:rgba(210,168,255,.4)}
+.btn{font-size:12px;padding:4px 10px;border-radius:6px;border:1px solid var(--line);background:var(--panel2);color:var(--fg);cursor:pointer}
+.btn.danger{color:var(--down);border-color:rgba(248,81,73,.5)}
+.chatb{border:1px solid var(--line);border-radius:6px;padding:10px;background:#0a0d12;font-size:13px}
+.chatb .tool{color:var(--accent2);font-family:"Cascadia Mono",monospace;font-size:12px}
+.gatebar{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.gate{font-size:12px;border:1px solid var(--line);border-radius:4px;padding:2px 8px;color:var(--sub)}
+.gate.ok{color:var(--up)} .gate.bad{color:var(--down)}
+</style>
+</head>
+<body>
+<div class="side">
+  <div class="brand">神机 <span>MT5</span></div>
+  <nav>
+    <a class="on" href="#"><span class="ic">◈</span> 总览</a>
+    <a href="#"><span class="ic">⇄</span> 交易中心</a>
+    <a href="#"><span class="ic">⚙</span> 策略中心</a>
+    <a href="#"><span class="ic">▥</span> 回测中心</a>
+    <a href="#"><span class="ic">✦</span> AI 参谋 <span class="pill ai">PA</span></a>
+    <a href="#"><span class="ic">⇋</span> 影子对照</a>
+    <a href="#"><span class="ic">≡</span> 日报·设置</a>
+  </nav>
+  <div class="foot">
+    <div>XAUUSD ｜ demo</div>
+    <div>v0.1.0 · build M3</div>
+  </div>
+</div>
+<div class="wrap">
+  <div class="topbar">
+    <span class="tick">XAUUSD <b class="mono up">4147.62</b> / <b class="mono down">4147.97</b></span>
+    <span class="sub mono">点差 0.35 ｜ 休市</span>
+    <span class="badge">● 引擎运行中</span>
+    <span class="clock mono">2026-10-04 12:33 UTC+8</span>
+  </div>
+  <main>
+    <div class="ptitle"><h1>总览</h1><span class="sub">smoke + m15/m30_followave 影子运行中 ｜ 上次刷新 12:33:05</span></div>
+
+    <div class="kpis">
+      <div class="kpi"><div class="l">净值</div><div class="v">100,005.04</div></div>
+      <div class="kpi"><div class="l">今日盈亏</div><div class="v up">+0.00</div></div>
+      <div class="kpi"><div class="l">本周盈亏</div><div class="v up">+0.00</div></div>
+      <div class="kpi"><div class="l">持仓 / 上限</div><div class="v">1 / 6</div></div>
+    </div>
+
+    <div class="gatebar">
+      <span class="gate ok">G0 放行</span><span class="gate">G1 未配置</span><span class="gate ok">G3 +0.0%</span>
+      <span class="gate ok">G3b +0.0%</span><span class="gate bad">G5 休市</span><span class="gate bad">G9 1/1</span>
+      <span class="gate ok">G9b 1/6</span><span class="gate">G13 BOTH</span>
+    </div>
+
+    <div class="grid">
+      <div class="panel"><h3>XAUUSD · M30（含持仓入场线）</h3><div id="k" class="chart"></div></div>
+      <div class="rows">
+        <div class="panel"><h3>持仓（1）</h3>
+          <table>
+            <tr><th>策略</th><th>方向</th><th>浮盈</th><th></th></tr>
+            <tr><td>smoke</td><td class="up">BUY 0.01</td><td class="up">+5.17</td>
+                <td><button class="btn danger">平仓</button></td></tr>
+          </table>
+        </div>
+        <div class="panel"><h3>策略中心</h3>
+          <div class="rows">
+            <div class="strow"><span class="nm">m30_followave</span><span class="st">胜率 47% · PF 1.13</span><span class="pill ok">RUN</span></div>
+            <div class="strow"><span class="nm">m15_followave</span><span class="st">胜率 49% · PF 1.14</span><span class="pill ok">RUN</span></div>
+            <div class="strow"><span class="nm">smoke</span><span class="st">冒烟探针</span><span class="pill ok">RUN</span></div>
+          </div>
+        </div>
+        <div class="panel"><h3>回测中心 · 最近</h3>
+          <div class="strow"><span class="nm">followave 四口径</span><span class="pill ok">PASS</span></div>
+          <div class="strow"><span class="nm">成本敏感性</span><span class="st">≤ $0.50/oz</span><span class="pill ok">✓</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="panel"><h3>累计已实现盈亏</h3><div id="eq" class="charts"></div></div>
+      <div class="panel"><h3>AI 参谋 · 会话 #a3f2</h3>
+        <div class="chatb">
+          <div class="tool">▸ get_pa_analysis(M30) ✓ ｜ ▸ get_positions ✓</div>
+          <p>PA 判定：需求区 4,120–4,126 已测试，趋势内部回调；<b>观望</b>（置信度 0.62），等待 4,152 上破确认。持仓 smoke 浮盈 +5.17，入场线位于需求区上沿。</p>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+<script>
+let seed=99;function rnd(){seed=(seed*9301+49297)%233280;return seed/233280}
+const candles=[];let px=4145;
+for(let i=0;i<160;i++){const o=px;const c=o+(rnd()-0.485)*7;const h=Math.max(o,c)+rnd()*2.2;const l=Math.min(o,c)-rnd()*2.2;px=c;candles.push([o,c,l,h]);}
+const cat=candles.map((_,i)=>{const d=new Date(1790700000+i*1800*1000);return d.toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})});
+const up='#3fb950',dn='#f85149';
+const k=echarts.init(document.getElementById('k'),null,{renderer:'canvas'});
+k.setOption({animation:false,grid:{left:56,right:10,top:10,bottom:46},
+xAxis:{type:'category',data:cat,axisLabel:{color:'#8b949e',fontSize:10}},
+yAxis:{scale:true,splitLine:{lineStyle:{color:'#21262d'}},axisLabel:{color:'#8b949e',fontSize:10}},
+tooltip:{trigger:'axis',axisPointer:{type:'cross'}},
+series:[{type:'candlestick',data:candles,itemStyle:{color:up,color0:dn,borderColor:up,borderColor0:dn}},
+{type:'line',data:cat.map(()=>4142.45),symbol:'none',lineStyle:{type:'dashed',width:1.2,color:up}}]});
+const eq=echarts.init(document.getElementById('eq'),null,{renderer:'canvas'});
+const eqd=[];let c2=0;for(let i=0;i<60;i++){c2+=(rnd()-0.42)*8;eqd.push(+c2.toFixed(2));}
+eq.setOption({animation:false,grid:{left:52,right:10,top:10,bottom:36},
+xAxis:{type:'category',data:eqd.map((_,i)=>`W-${60-i}`),axisLabel:{color:'#8b949e',fontSize:10}},
+yAxis:{scale:true,splitLine:{lineStyle:{color:'#21262d'}},axisLabel:{color:'#8b949e',fontSize:10}},
+series:[{type:'line',data:eqd,showSymbol:false,lineStyle:{width:2,color:'#d2a8ff'},areaStyle:{color:'rgba(210,168,255,.10)'}}]});
+window.addEventListener('resize',()=>{k.resize();eq.resize()});
+</script>
+</body>
+</html>

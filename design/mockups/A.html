@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<!-- 方案 A「终端密度型」 — tokens: docs/DESIGN_SYSTEM.md §2.1 ｜ 密度高/信息 maximal/4px 栅格 -->
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>样稿 A · 终端密度型 — 神机 MT5</title>
+<script src="../../dashboard/static/echarts.min.js"></script>
+<style>
+:root{--bg:#0a0e12;--panel:#10161d;--panel2:#151c25;--line:#1d2632;--fg:#c9d4e0;--strong:#eef3f8;--sub:#7d8b9c;--accent:#f0a63a;--accent2:#35c9e8;--up:#00c8a0;--down:#ff5c5c;--warn:#ffb020;--danger:#ff4d4f}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:12px/1.45 "Segoe UI","Microsoft YaHei",sans-serif}
+.mono{font-family:"Cascadia Mono",Consolas,monospace}
+/* 命令栏 */
+.cmdbar{display:flex;align-items:center;gap:10px;height:30px;padding:0 8px;background:#070a0d;border-bottom:1px solid var(--line)}
+.cmdbar .logo{color:var(--accent);font-weight:800}
+.cmdbar .search{background:#0d1319;border:1px solid var(--line);border-radius:4px;color:var(--sub);padding:2px 8px;width:180px}
+.cmdbar .tick{margin-left:auto}
+.cmdbar .tick b{color:var(--strong)}
+.cmdbar .acct{color:var(--sub)} .cmdbar .clock{color:var(--accent2)}
+/* 布局 */
+.work{display:grid;grid-template-columns:190px 1fr 300px;gap:6px;padding:6px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:6px}
+.panel .ph{display:flex;justify-content:space-between;align-items:center;height:24px;padding:0 8px;border-bottom:1px solid var(--line);color:var(--sub);font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+.watch li{display:flex;justify-content:space-between;list-style:none;padding:3px 8px;cursor:pointer}
+.watch li.on{background:#182130;color:var(--strong)}
+.watch ul{margin:4px 0;padding:0}
+.watch .sym{color:var(--strong)} .up{color:var(--up)} .down{color:var(--down)}
+#k{height:330px}
+.kbar{display:flex;gap:4px;padding:4px 8px}
+.tf{background:var(--panel2);border:1px solid var(--line);border-radius:4px;color:var(--sub);padding:1px 8px;cursor:pointer;font-size:11px}
+.tf.on{color:var(--accent);border-color:var(--accent)}
+/* 底部工作区标签 */
+.tabs{display:flex;gap:2px;padding:0 6px;border-bottom:1px solid var(--line);margin-top:2px}
+.tabs .tab{padding:5px 14px;color:var(--sub);cursor:pointer;border:1px solid transparent;border-bottom:none;border-radius:4px 4px 0 0}
+.tabs .tab.on{color:var(--accent);background:var(--panel);border-color:var(--line)}
+.tabbody{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;padding:6px}
+.tile{background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:6px 8px}
+.tile .l{color:var(--sub);font-size:11px}
+.tile .v{font-size:16px;color:var(--strong);font-family:"Cascadia Mono",Consolas,monospace}
+.gates{display:flex;flex-wrap:wrap;gap:3px}
+.g{border:1px solid var(--line);border-radius:3px;padding:1px 6px;font-size:11px}
+.g.ok{color:var(--up);border-color:#0e4d42}.g.bad{color:var(--down);border-color:#5c2626}
+.strat{display:flex;justify-content:space-between;padding:5px 8px;border-bottom:1px solid var(--line)}
+.strat b{color:var(--strong)}
+.btn{background:#182130;border:1px solid var(--line);border-radius:4px;color:var(--fg);padding:2px 8px;cursor:pointer;font-size:11px}
+.btn.red{color:var(--down);border-color:#5c2626}
+.btn.gold{color:var(--accent);border-color:#5a4520}
+.chat{padding:6px 8px;display:flex;flex-direction:column;gap:5px}
+.bub{max-width:92%;padding:5px 8px;border-radius:5px}
+.bub.ai{background:#12202c;border:1px solid var(--line)}
+.bub.me{background:#1c2540;align-self:flex-end}
+.hint{color:var(--sub);padding:0 8px 6px}
+</style>
+</head>
+<body>
+<div class="cmdbar">
+  <span class="logo">神机·MT5</span>
+  <input class="search" placeholder="搜索品种/策略… (Ctrl+K)">
+  <span class="tick">XAUUSD <b class="mono">4147.62</b> / <b class="mono down">4147.97</b> <span class="mono">点差 0.35</span></span>
+  <span class="acct mono">净值 100,005.04 ｜ 可用 99,998.62</span>
+  <span style="flex:1"></span>
+  <span class="g ok">● 引擎</span>
+  <span class="clock mono">2026-10-04 12:33:05 UTC+8</span>
+</div>
+
+<div class="work">
+  <div class="panel">
+    <div class="ph"><span>市场监视</span><span>⚙</span></div>
+    <ul class="watch">
+      <li class="on"><span class="sym">XAUUSD</span><span class="mono up">4147.62 +0.31%</span></li>
+      <li><span>XAUUSD.m</span><span class="mono">4147.70</span></li>
+      <li><span>XAGUSD</span><span class="mono down">-1.2%</span></li>
+      <li><span>EURUSD</span><span class="mono up">+0.1%</span></li>
+    </ul>
+    <div class="ph"><span>账户</span></div>
+    <ul class="watch">
+      <li><span>余额</span><span class="mono">100,000.00</span></li>
+      <li><span>净值</span><span class="mono">100,005.04</span></li>
+      <li><span>浮盈</span><span class="mono up">+5.17</span></li>
+      <li><span>今日</span><span class="mono">+0.00</span></li>
+      <li><span>本周</span><span class="mono">+0.00</span></li>
+    </ul>
+    <div class="ph"><span>风控 G0~G15</span></div>
+    <div class="gates" style="padding:6px 8px">
+      <span class="g ok">G0</span><span class="g ok">G3</span><span class="g ok">G3b</span><span class="g bad">G5 休市</span><span class="g bad">G9 1/1</span><span class="g ok">G9b 1/6</span><span class="g">G13</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="ph"><span>XAUUSD · M30 · MetaQuotes-Demo</span><span>forming bar 隐藏</span></div>
+    <div class="kbar"><span class="tf on">M5</span><span class="tf">M15</span><span class="tf on">M30</span><span class="tf">H1</span><span class="tf">D1</span><span style="flex:1"></span><span class="tf">EMA</span><span class="tf">BOLL</span><span class="tf">RSI</span><span class="tf">MACD</span></div>
+    <div id="k"></div>
+    <div class="ph"><span>持仓（1）</span><span>引擎: demo</span></div>
+    <table class="mono" width="100%">
+      <tr style="color:var(--sub)"><th align="left">策略</th><th>方向</th><th>手数</th><th>开仓</th><th>现价</th><th>浮盈</th><th>时长</th><th>SL</th><th>TP</th><th></th></tr>
+      <tr><td>smoke</td><td align="center" class="up">BUY</td><td align="center">0.01</td><td align="center">4142.45</td><td align="center">4147.62</td><td align="center" class="up">+5.17</td><td align="center">18h</td><td align="center">4112</td><td align="center">—</td><td align="center"><button class="btn red">平仓</button> <button class="btn">改SL</button></td></tr>
+    </table>
+  </div>
+
+  <div class="panel">
+    <div class="ph"><span>最近信号</span></div>
+    <ul class="watch">
+      <li><span>10-03 00:10 smoke BUY</span><span class="g bad">G9</span></li>
+      <li><span>10-03 00:05 smoke BUY</span><span class="g bad">G9</span></li>
+      <li><span>10-02 23:30 smoke BUY</span><span class="g ok">opened</span></li>
+      <li><span>10-02 21:20 m30_fa BUY</span><span class="g ok">opened</span></li>
+    </ul>
+    <div class="ph"><span>健康巡检</span></div>
+    <ul class="watch">
+      <li><span>引擎</span><span class="up">GREEN</span></li>
+      <li><span>终端连接</span><span class="up">GREEN</span></li>
+      <li><span>日回撤</span><span class="up">0.0%</span></li>
+      <li><span>周回撤</span><span class="up">0.0%</span></li>
+      <li><span>数据新鲜度</span><span class="down">休市</span></li>
+    </ul>
+  </div>
+</div>
+
+<div class="tabs">
+  <span class="tab">总览</span><span class="tab on">交易中心</span><span class="tab">策略中心</span><span class="tab">回测中心</span><span class="tab">AI 参谋</span><span class="tab">影子对照</span><span class="tab">日报·设置</span>
+</div>
+<div class="tabbody">
+  <div class="panel">
+    <div class="ph"><span>策略中心 · 策略池</span></div>
+    <div class="strat"><span><b>m30_followave</b> <span class="g ok">RUN</span><br><span class="sub">M30 · 661402 · v1.0 · 胜率 47% PF 1.13</span></span><span><button class="btn">停用</button></span></div>
+    <div class="strat"><span><b>m15_followave</b> <span class="g ok">RUN</span><br><span class="sub">M15 · 661401 · v1.0 · 胜率 49% PF 1.14</span></span><span><button class="btn">停用</button></span></div>
+    <div class="strat"><span><b>smoke</b> <span class="g ok">RUN</span><br><span class="sub">M5 · 661901 · 冒烟探针</span></span><span><button class="btn">停用</button></span></div>
+    <div class="hint">池编辑后需重启引擎生效 ｜ changelog →</div>
+  </div>
+  <div class="panel">
+    <div class="ph"><span>回测中心 · 最近作业</span></div>
+    <div class="strat"><span><b>followave 四口径</b><br><span class="sub">M30 全样本 +2012 ｜ PF 1.11 ｜ 3846 笔</span></span><span class="g ok">PASS</span></div>
+    <div class="strat"><span><b>成本敏感性</b><br><span class="sub">可承受点差 ≤ $0.50/oz</span></span><span class="g ok">✓</span></div>
+    <div class="strat"><span><b>影子对照 W1</b><br><span class="sub">方向一致率 —（积累中）</span></span><span class="g">…</span></div>
+    <div class="hint">新作业 → 选策略/区间/口径 → 子进程执行</div>
+  </div>
+  <div class="panel">
+    <div class="ph"><span>AI 参谋 · 会话 #a3f2</span><span class="g ok">tools ON</span></div>
+    <div class="chat">
+      <div class="bub me">当前 M30 结构怎么看？有 PA 机会吗？</div>
+      <div class="bub ai">▸ get_pa_analysis(M30) → 需求区 4,120–4,126 已测试；趋势内部回调。<br>▸ 决策：<b>观望</b>（置信度 0.62），等待 4,152 上破确认。</div>
+    </div>
+    <div class="hint">输入问题… ｜ 工具: 8 ｜ PA: sidecar ON</div>
+  </div>
+</div>
+
+<script>
+let seed=42;function rnd(){seed=(seed*9301+49297)%233280;return seed/233280}
+const candles=[];let px=4145;
+for(let i=0;i<160;i++){const o=px;const c=o+(rnd()-0.485)*7;const h=Math.max(o,c)+rnd()*2.2;const l=Math.min(o,c)-rnd()*2.2;px=c;candles.push([o,c,l,h]);}
+const cat=candles.map((_,i)=>{const d=new Date(1790700000+i*1800*1000);return d.toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})});
+const k=echarts.init(document.getElementById('k'),null,{renderer:'canvas'});
+k.setOption({animation:false,grid:{left:52,right:6,top:8,bottom:44},
+xAxis:{type:'category',data:cat,axisLabel:{color:'#7d8b9c',fontSize:10}},
+yAxis:{scale:true,splitLine:{lineStyle:{color:'#161d28'}},axisLabel:{color:'#7d8b9c',fontSize:10}},
+tooltip:{trigger:'axis',axisPointer:{type:'cross'}},
+series:[{type:'candlestick',data:candles,itemStyle:{color:'#00c8a0',color0:'#ff5c5c',borderColor:'#00c8a0',borderColor0:'#ff5c5c'}},
+{type:'line',data:cat.map(()=>4142.45),symbol:'none',lineStyle:{type:'dashed',width:1,color:'#00c8a0'}}]});
+window.addEventListener('resize',()=>k.resize());
+</script>
+</body>
+</html>

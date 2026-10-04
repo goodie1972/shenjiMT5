@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<!-- 方案 B「卡片呼吸型」 — tokens: docs/DESIGN_SYSTEM.md §2.2 ｜ 现行 v2 的成熟化/8px 栅格/卡片阴影 -->
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>样稿 B · 卡片呼吸型 — 神机 MT5</title>
+<script src="../../dashboard/static/echarts.min.js"></script>
+<style>
+:root{--bg:#0f1420;--panel:#171e2e;--panel2:#1c2436;--line:#232c40;--fg:#d8dee9;--strong:#f2f5f9;--sub:#8a94a6;--accent:#e8b34b;--accent2:#5b8def;--up:#26a69a;--down:#ef5350}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 "Segoe UI","Microsoft YaHei",sans-serif}
+.mono{font-family:Consolas,monospace}
+header{display:flex;align-items:center;gap:18px;height:52px;padding:0 22px;background:linear-gradient(180deg,#151b29,#10141f);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:9}
+header .brand{font-weight:800;font-size:16px;color:var(--accent)}
+header .brand span{color:var(--fg);font-weight:400;font-size:13px;margin-left:4px}
+nav{display:flex;gap:8px;margin-left:8px}
+nav a{color:var(--sub);text-decoration:none;padding:6px 16px;border-radius:20px;font-size:13px}
+nav a.on{color:#0f1420;background:var(--accent);font-weight:600}
+.badge{margin-left:auto;font-size:12px;padding:5px 14px;border-radius:20px;color:var(--up);border:1px solid rgba(38,166,154,.4);background:rgba(38,166,154,.08)}
+main{max-width:1340px;margin:0 auto;padding:18px 20px}
+.tiles{display:grid;grid-template-columns:repeat(6,1fr);gap:14px;margin-bottom:16px}
+.tile{background:linear-gradient(180deg,#1a2234,#171e2e);border:1px solid var(--line);border-radius:12px;padding:14px 16px;box-shadow:0 2px 10px rgba(0,0,0,.25)}
+.tile .l{color:var(--sub);font-size:12px}
+.tile .v{font-size:24px;font-weight:700;color:var(--strong);font-family:Consolas,monospace;margin:2px 0}
+.tile .s{color:var(--sub);font-size:12px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;box-shadow:0 2px 10px rgba(0,0,0,.25)}
+.card h3{margin:0 0 12px;font-size:13px;color:#aeb8c9;text-transform:uppercase;letter-spacing:.06em}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:16px}
+.chart{height:320px}.charts{height:250px}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+th{color:var(--sub);font-size:12px}
+tr:hover td{background:#1a2132}
+.up{color:var(--up)}.down{color:var(--down)}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{padding:6px 10px;border-radius:8px;background:var(--panel2);border:1px solid var(--line);font-size:12px}
+.chip.ok{border-color:rgba(38,166,154,.5)} .chip.ok b{color:var(--up)}
+.chip.bad{border-color:rgba(239,83,80,.5)} .chip.bad b{color:var(--down)}
+.strategy{border:1px solid var(--line);border-radius:12px;padding:14px}
+.strategy .nm{font-weight:700;color:var(--strong)}
+.strategy .meta{color:var(--sub);font-size:12px;margin:4px 0 8px}
+.strategy .stats{display:flex;gap:12px;font-family:Consolas,monospace;font-size:12px}
+.sw{display:inline-block;width:34px;height:18px;border-radius:10px;background:var(--up);position:relative;vertical-align:middle}
+.sw::after{content:'';position:absolute;right:2px;top:2px;width:14px;height:14px;border-radius:50%;background:#fff}
+.bt{border:1px solid var(--line);border-radius:12px;padding:14px}
+.bt .row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line);font-size:13px}
+.pass{color:var(--up);font-weight:700}
+.chat{display:flex;flex-direction:column;gap:10px}
+.bub{max-width:88%;padding:10px 14px;border-radius:12px;font-size:13px}
+.bub.ai{background:#1c2540;border:1px solid var(--line)}
+.bub.me{background:#233a3d;align-self:flex-end}
+.tool{color:var(--accent2);font-size:12px;font-family:Consolas,monospace}
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">神机<span>MT5</span></span>
+  <nav>
+    <a class="on" href="#">总览</a><a href="#">交易中心</a><a href="#">策略中心</a><a href="#">回测中心</a><a href="#">AI 参谋</a><a href="#">影子对照</a><a href="#">日报·设置</a>
+  </nav>
+  <span class="badge">● 引擎运行中 · demo</span>
+</header>
+<main>
+  <div class="tiles">
+    <div class="tile"><div class="l">XAUUSD</div><div class="v">4147.62</div><div class="s">点差 0.35 ｜ 休市</div></div>
+    <div class="tile"><div class="l">净值</div><div class="v">100,005.04</div><div class="s">余额 100,000.00</div></div>
+    <div class="tile"><div class="l">今日盈亏</div><div class="v">+0.00</div><div class="s">已实现</div></div>
+    <div class="tile"><div class="l">本周盈亏</div><div class="v">+0.00</div><div class="s">熔断线 -15%</div></div>
+    <div class="tile"><div class="l">持仓</div><div class="v">1</div><div class="s">smoke · demo</div></div>
+    <div class="tile"><div class="l">引擎</div><div class="v up" style="font-size:18px">● 运行中</div><div class="s">心跳 0s 前</div></div>
+  </div>
+
+  <div class="grid2">
+    <div class="card"><h3>XAUUSD · M30</h3><div id="k" class="chart"></div></div>
+    <div class="card"><h3>累计已实现盈亏</h3><div id="eq" class="chart"></div></div>
+  </div>
+
+  <div class="grid3">
+    <div class="card">
+      <h3>持仓（1）</h3>
+      <table>
+        <tr><th>策略</th><th>方向</th><th>手数</th><th>浮盈</th><th>操作</th></tr>
+        <tr><td>smoke</td><td class="up">BUY</td><td>0.01</td><td class="up">+5.17</td>
+            <td><button class="chip bad" style="cursor:pointer">平仓</button> <button class="chip" style="cursor:pointer">改SL</button></td></tr>
+      </table>
+      <h3 style="margin-top:16px">风控门禁</h3>
+      <div class="chips">
+        <span class="chip ok"><b>G0</b> 放行</span><span class="chip"><b>G3</b> +0.0%</span>
+        <span class="chip ok"><b>G3b</b> +0.0%</span><span class="chip bad"><b>G5</b> 休市</span>
+        <span class="chip bad"><b>G9</b> 1/1</span><span class="chip ok"><b>G9b</b> 1/6</span>
+        <span class="chip"><b>G13</b> BOTH</span>
+      </div>
+    </div>
+    <div class="card">
+      <h3>策略中心 · 策略池</h3>
+      <div class="strategy" style="margin-bottom:10px">
+        <span class="nm">m30_followave <span class="sw"></span></span>
+        <div class="meta">M30 · magic 661402 · v1.0 · 运行中</div>
+        <div class="stats"><span>胜率 <b class="up">47%</b></span><span>PF <b>1.13</b></span><span>连亏 <b>1</b></span><span>盈亏 <b class="up">+345.8</b></span></div>
+      </div>
+      <div class="strategy" style="margin-bottom:10px">
+        <span class="nm">m15_followave <span class="sw"></span></span>
+        <div class="meta">M15 · magic 661401 · v1.0 · 运行中</div>
+        <div class="stats"><span>胜率 <b class="up">49%</b></span><span>PF <b>1.14</b></span><span>连亏 <b>0</b></span><span>盈亏 <b class="up">+524.4</b></span></div>
+      </div>
+      <div class="strategy">
+        <span class="nm">smoke <span class="sw"></span></span>
+        <div class="meta">M5 · magic 661901 · 冒烟探针</div>
+        <div class="stats"><span>盈亏 <b class="up">+5.17</b>（浮）</span></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>回测中心 · 最近作业</h3>
+      <div class="bt">
+        <div class="row"><span>followave 四口径</span><span class="pass">PASS</span></div>
+        <div class="row"><span>M30 全样本</span><span class="mono">+2,012 ｜ PF 1.11</span></div>
+        <div class="row"><span>M15 全样本</span><span class="mono">+2,170 ｜ PF 1.12</span></div>
+        <div class="row"><span>成本敏感性</span><span class="mono">≤ $0.50/oz</span></div>
+        <div class="row"><span>影子对照 W1</span><span>积累中…</span></div>
+      </div>
+      <div class="chat" style="margin-top:14px">
+        <h3 style="margin-bottom:8px">AI 参谋</h3>
+        <div class="bub me">M30 有机会吗？</div>
+        <div class="bub ai"><span class="tool">▸ get_pa_analysis(M30) ✓</span><br>需求区 4,120–4,126 已测试，趋势内部回调。<b>观望</b>（置信度 0.62），等 4,152 上破确认。</div>
+      </div>
+    </div>
+  </div>
+</main>
+<script>
+let seed=7;function rnd(){seed=(seed*9301+49297)%233280;return seed/233280}
+const candles=[];let px=4145;
+for(let i=0;i<160;i++){const o=px;const c=o+(rnd()-0.485)*7;const h=Math.max(o,c)+rnd()*2.2;const l=Math.min(o,c)-rnd()*2.2;px=c;candles.push([o,c,l,h]);}
+const cat=candles.map((_,i)=>{const d=new Date(1790700000+i*1800*1000);return d.toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})});
+const up='#26a69a',dn='#ef5350';
+const k=echarts.init(document.getElementById('k'),null,{renderer:'canvas'});
+k.setOption({animation:false,grid:{left:56,right:10,top:10,bottom:46},
+xAxis:{type:'category',data:cat,axisLabel:{color:'#8a94a6',fontSize:10}},
+yAxis:{scale:true,splitLine:{lineStyle:{color:'#232c40'}},axisLabel:{color:'#8a94a6',fontSize:10}},
+tooltip:{trigger:'axis',axisPointer:{type:'cross'}},
+series:[{type:'candlestick',data:candles,itemStyle:{color:up,color0:dn,borderColor:up,borderColor0:dn}},
+{type:'line',data:cat.map(()=>4142.45),symbol:'none',lineStyle:{type:'dashed',width:1.2,color:up}}]});
+const eq=echarts.init(document.getElementById('eq'),null,{renderer:'canvas'});
+const eqd=[];let c2=0;for(let i=0;i<60;i++){c2+=(rnd()-0.42)*8;eqd.push(+c2.toFixed(2));}
+eq.setOption({animation:false,grid:{left:56,right:10,top:10,bottom:46},
+xAxis:{type:'category',data:eqd.map((_,i)=>`W-${60-i}`),axisLabel:{color:'#8a94a6',fontSize:10}},
+yAxis:{scale:true,splitLine:{lineStyle:{color:'#232c40'}},axisLabel:{color:'#8a94a6',fontSize:10}},
+series:[{type:'line',data:eqd,showSymbol:false,lineStyle:{width:2,color:'#e8b34b'},areaStyle:{color:'rgba(232,179,75,.12)'}}]});
+window.addEventListener('resize',()=>{k.resize();eq.resize()});
+</script>
+</body>
+</html>
