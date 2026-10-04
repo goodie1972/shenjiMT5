@@ -13,7 +13,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 HERE = Path(__file__).resolve().parent.parent / "design" / "mockups"
-SHOTS = ["A", "B", "C"]
+SHOTS = ["A", "B", "C", "D"]
 
 
 def main() -> int:
