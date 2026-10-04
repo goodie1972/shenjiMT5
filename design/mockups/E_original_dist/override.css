@@ -1,0 +1,34 @@
+/* E 微调层 override.css — 原版 100% 保留，只加不改（无字体/字号/底色变更） */
+
+/* ① 新增导航项徽章（AI 参谋 / 影子对照） */
+.e-new {
+  color: #f0b90b;
+  font-size: 10px;
+  padding: 0 5px;
+  border: 1px solid #f0b90b;
+  border-radius: 8px;
+  margin-left: auto;
+}
+
+/* ② 新增功能占位面板（D6 AI 参谋 / D7 影子对照 规划页示意） */
+#e-panel {
+  position: fixed;
+  inset: 52px 18px 18px 218px;
+  background: #fff;
+  border: 1px solid #e3e6eb;
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, .12);
+  z-index: 3000;
+  padding: 22px 26px;
+  overflow: auto;
+}
+#e-panel h2 { font-size: 17px; margin: 0 0 6px; }
+#e-panel .tag { color: #f0b90b; font-size: 12px; margin-bottom: 14px; }
+#e-panel .kv { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0; }
+#e-panel .kvd { background: #f5f7fa; border-radius: 8px; padding: 10px 12px; font-size: 13px; }
+#e-panel .kvd b { display: block; margin-bottom: 2px; }
+#e-panel .close { float: right; cursor: pointer; color: #8b8f97; font-size: 18px; }
+#e-panel p { font-size: 13px; color: #444; line-height: 1.7; }
+
+/* ③ 策略中心行内 stats 预留（源码级改造时的目标样式，先占位说明） */
+.e-note { color: #8b8f97; font-size: 12px; }
