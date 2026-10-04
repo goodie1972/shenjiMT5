@@ -200,6 +200,20 @@ GET /api/shadow/weekly → 读最新 shadow_weekly_*.md
 
 Vue/构建链、Tauri/PyInstaller 打包、自动更新器、策略上传端点、994 行翻译字典、客户端 TA 重实现、引擎嵌面板进程、AI 下单、MCP 栈（首版；需要外部连接器时按旧库 682 行设计加回）。
 
+## 8. E 路线 UI 完成计划（2026-10-04 启动，用户确认 E 底座）
+
+**已定案**：UI 底座 = fork 旧前端源码（`web/`，76 个 .vue/.ts 文件，Vite 构建链回归——用户方向优先）。fork 当日验证：Node 24 + npmmirror `npm install` 137 包 + `npm run build` 45s 全通过。
+
+**端点差距与实现顺序**：`docs/API_CONTRACT.md`（15 个家族，U-E1 只读闭环 → U-E2 控制与配置 → U-E3 回测/新闻/报告 → U-E4 AI 底座+PA sidecar）。
+
+**Tauri 立场（用户问，已答）**：正式版壳 = Tauri（小体积/签名/自动更新）；开发与自用版壳 = pywebview（现有 run_app.py）。前端资产两边通用——迁移 = 打包配置（Tauri sidecar 挂 PyInstaller 后端 exe），非重写。迁移触发条件：需要分发给别人或远程访问时。
+
+**固化（freeze）定义**：① 前端源码 + tokens + API 契约全部实现并 Playwright 回归绿；② 导航/组件命名与 DESIGN_SYSTEM §1 一致；③此后 UI 变更走"契约变更流程"，不再临时动。
+
+**桌面壳演进**：pywebview（现在）→ Tauri（正式版）。两者都是"直接启动的原生窗口"，用户已验收 pywebview 形态。
+
+---
+
 ## 变更记录
 
 | 版本 | 日期 | 变更 |

@@ -27,3 +27,10 @@ htmlcov/
 *.swp
 Thumbs.db
 .DS_Store
+
+# ── 前端构建产物/依赖不入库（源码入库）──
+web/node_modules/
+web/dist/
+
+# Windows 保留名 nul 字面文件（npm/Vite 已知坑，出现即删）
+nul

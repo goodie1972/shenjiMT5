@@ -1,0 +1,1341 @@
+<script setup lang="ts">
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+
+/** 检查用户是否在查看最新数据（近5根K线内） */
+function isViewingLatest() {
+  if (!chart) return true
+  try {
+    const range = chart.timeScale().getVisibleLogicalRange()
+    if (!range) return true
+    const lastIdx = store.candles.length - 1
+    return range.to >= lastIdx - 5
+  } catch { return true }
+}
+
+import { usePriceStore } from '@/stores/prices'
+import { useAppStore } from '@/stores/app'
+import { useFlashOnChange } from '@/composables/useFlashOnChange'
+import { createChart, ColorType, type UTCTimestamp } from 'lightweight-charts'
+import {
+  calcEMA, calcSMA, calcBollinger, calcRSI, calcStoch,
+  calcMACD, calcATR, calcVolume, calcADX, calcMFI,
+  type CandleData, type LinePoint, type BandPoint, type HistogramPoint,
+} from '@/utils/indicators'
+import {
+  syncAllChartsFrom, onCrosshairMove, getPaneSeriesList as _getPaneSeriesList,
+  type ChartRef, type SyncLock,
+} from '@/utils/chartSync'
+
+function sanitizeCandleData(candles: CandleData[]) {
+  return candles
+    .filter(c => c.open != null && c.high != null && c.low != null && c.close != null)
+    .map(c => ({
+      time: c.time as UTCTimestamp,
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+    }))
+}
+
+const store = usePriceStore()
+const chartContainer = ref<HTMLDivElement>()
+
+// 副图容器 refs
+const rsiRef = ref<HTMLDivElement>()
+const stochRef = ref<HTMLDivElement>()
+const macdRef = ref<HTMLDivElement>()
+const atrRef = ref<HTMLDivElement>()
+const volRef = ref<HTMLDivElement>()
+const adxRef = ref<HTMLDivElement>()
+const mfiRef = ref<HTMLDivElement>()
+const bbiRef = ref<HTMLDivElement>()
+const diRef = ref<HTMLDivElement>()
+
+function getPaneEl(name: string): HTMLDivElement | undefined {
+  const map: Record<string, any> = { rsi: rsiRef, stoch: stochRef, macd: macdRef, atr: atrRef, volume: volRef, adx: adxRef, mfi: mfiRef, bbi: bbiRef, di: diRef }
+  return map[name]?.value
+}
+
+function castTime<T extends { time: number }>(arr: T[]): (T & { time: UTCTimestamp })[] {
+  return arr.map(p => ({ ...p, time: p.time as UTCTimestamp }))
+}
+
+let chart: ReturnType<typeof createChart> | null = null
+let candleSeries: any = null
+let overlaySeries: Record<string, any> = {}
+
+// 副图实例（按 oscillator name）
+let paneCharts: Record<string, ReturnType<typeof createChart>> = {}
+let paneSeries: Record<string, any> = {}
+
+const timeframes = ['M5', 'M15', 'M30', 'H1', 'H4', 'D1', 'W1']
+const activeTf = ref('H1')
+let refreshTimer: ReturnType<typeof setInterval> | null = null
+
+// ---- localStorage 持久化（保存周期和指标配置） ----
+const STORAGE_KEY = 'algoforge_terminal_config'
+
+/**
+ * 按周期加载配置
+ * @param restoreLastTf 是否恢复上次使用的周期（仅组件挂载时 true，切换周期时 false）
+ */
+function loadTerminalConfig(restoreLastTf = false) {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return
+    const all = JSON.parse(raw)
+    // 只在组件挂载时恢复上次使用的周期
+    if (restoreLastTf && all.lastTf && all.lastTf !== activeTf.value) {
+      activeTf.value = all.lastTf
+    }
+    const cfg = all[activeTf.value]
+    if (!cfg) return
+    showEMA.value = cfg.showEMA ?? false
+    showSMA.value = cfg.showSMA ?? false
+    showBB.value = cfg.showBB ?? false
+    showRSI.value = cfg.showRSI ?? false
+    showStoch.value = cfg.showStoch ?? false
+    showMACD.value = cfg.showMACD ?? false
+    showATR.value = cfg.showATR ?? false
+    showVolume.value = cfg.showVolume ?? false
+    showADX.value = cfg.showADX ?? false
+    showDI.value = cfg.showDI ?? false
+    showMFI.value = cfg.showMFI ?? false
+    showBBI.value = cfg.showBBI ?? false
+    if (cfg.ema1) ema1.value = cfg.ema1
+    if (cfg.ema2) ema2.value = cfg.ema2
+    if (cfg.ema3) ema3.value = cfg.ema3
+    if (cfg.sma1) sma1.value = cfg.sma1
+    if (cfg.sma2) sma2.value = cfg.sma2
+    if (cfg.bbPeriod) bbPeriod.value = cfg.bbPeriod
+    if (cfg.bbStd) bbStd.value = cfg.bbStd
+    if (cfg.rsiPeriod) rsiPeriod.value = cfg.rsiPeriod
+    if (cfg.rsiOb) rsiOb.value = cfg.rsiOb
+    if (cfg.rsiOs) rsiOs.value = cfg.rsiOs
+    if (cfg.stochK) stochK.value = cfg.stochK
+    if (cfg.stochKSmooth) stochKSmooth.value = cfg.stochKSmooth
+    if (cfg.stochDSmooth) stochDSmooth.value = cfg.stochDSmooth
+    if (cfg.macdFast) macdFast.value = cfg.macdFast
+    if (cfg.macdSlow) macdSlow.value = cfg.macdSlow
+    if (cfg.macdSignal) macdSignal.value = cfg.macdSignal
+    if (cfg.atrPeriod) atrPeriod.value = cfg.atrPeriod
+    if (cfg.adxPeriod) adxPeriod.value = cfg.adxPeriod
+    if (cfg.diPeriod) diPeriod.value = cfg.diPeriod
+    if (cfg.mfiPeriod) mfiPeriod.value = cfg.mfiPeriod
+  } catch (e) { /* ignore corrupt config */ }
+}
+function saveTerminalConfig() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    const all = raw ? JSON.parse(raw) : {}
+    all.lastTf = activeTf.value  // 保存最后使用的周期
+    all[activeTf.value] = {
+      tf: activeTf.value,
+      showEMA: showEMA.value, showSMA: showSMA.value, showBB: showBB.value,
+      showRSI: showRSI.value, showStoch: showStoch.value, showMACD: showMACD.value,
+      showATR: showATR.value, showVolume: showVolume.value,
+      showADX: showADX.value, showDI: showDI.value, showMFI: showMFI.value, showBBI: showBBI.value,
+      ema1: ema1.value, ema2: ema2.value, ema3: ema3.value,
+      sma1: sma1.value, sma2: sma2.value,
+      bbPeriod: bbPeriod.value, bbStd: bbStd.value,
+      rsiPeriod: rsiPeriod.value, rsiOb: rsiOb.value, rsiOs: rsiOs.value,
+      stochK: stochK.value, stochKSmooth: stochKSmooth.value, stochDSmooth: stochDSmooth.value,
+      macdFast: macdFast.value, macdSlow: macdSlow.value, macdSignal: macdSignal.value,
+      atrPeriod: atrPeriod.value,
+      adxPeriod: adxPeriod.value, diPeriod: diPeriod.value, mfiPeriod: mfiPeriod.value,
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(all))
+  } catch (e) { /* ignore storage error */ }
+}
+
+// 各周期默认指标预设 — 切换周期时自动启用/停用
+const tfIndicatorPresets: Record<string, Record<string, boolean>> = {
+  M5:  { rsi: false, stoch: false, macd: false, bb: true,  volume: true,  adx: true,  mfi: true,  bbi: false },
+  M15: { rsi: false, stoch: false, macd: false, bb: true,  volume: false, adx: false, mfi: false, bbi: false },
+  M30: { rsi: false, stoch: false, macd: true,  bb: true,  volume: false, adx: false, mfi: false, bbi: false },
+  H1:  { rsi: true,  stoch: false, macd: false, bb: true,  volume: false, adx: false, mfi: false, bbi: true  },
+  H4:  { rsi: false, stoch: true,  macd: false, bb: true,  volume: false, adx: false, mfi: false, bbi: true  },
+  D1:  { rsi: false, stoch: false, macd: false, bb: false, volume: false, adx: false, mfi: false, bbi: false },
+  W1:  { rsi: false, stoch: false, macd: false, bb: false, volume: false, adx: false, mfi: false, bbi: false },
+}
+
+function getRefreshInterval(tf: string): number {
+  if (tf === 'M1' || tf === 'M5' || tf === 'M15') return 2_000
+  if (tf === 'M30' || tf === 'H1') return 2_000
+  if (tf === 'H4') return 10_000
+  return 30_000 // D1, W1
+}
+
+function stopAutoRefresh() {
+  if (refreshTimer !== null) {
+    clearInterval(refreshTimer)
+    refreshTimer = null
+  }
+}
+
+function startAutoRefresh() {
+  stopAutoRefresh()
+  const ms = getRefreshInterval(activeTf.value)
+  refreshTimer = setInterval(async () => {
+    if (!candleSeries) return
+    // 只拉最新 3 根增量更新，不触发 loading 转圈
+    const beforeT = store.candles.length ? store.candles[store.candles.length - 1].time : 0
+    await store.fetchLatestCandles(activeTf.value, 3)
+    if (store.candles.length === 0) return
+    const afterT = store.candles[store.candles.length - 1].time
+    const newBar = afterT !== beforeT
+    try { candleSeries.setData(sanitizeCandleData(store.candles)) }
+    catch (e) { console.warn('[K线] auto-refresh setData失败', e) }
+    // 仅当新 K 线出现时才全量重算所有指标（RSI/Stoch/MACD/...），
+    // 否则只刷新主图叠加（EMA/BB），避免每 2s 全量重算拖垮主线程导致界面卡顿
+    if (newBar) {
+      afterDataLoad()
+    } else {
+      applyOverlay()
+    }
+    nextTick(() => {
+      if (isViewingLatest()) scrollAllToRealTime()
+      requestAnimationFrame(() => syncAllPriceScaleWidths())
+    })
+  }, ms)
+}
+
+// 指标开关
+const showEMA = ref(false)
+const showSMA = ref(false)
+const showBB = ref(false)
+const showRSI = ref(false)
+const showStoch = ref(false)
+const showMACD = ref(false)
+const showATR = ref(false)
+const showVolume = ref(false)
+const showADX = ref(false)
+const showDI = ref(false)
+const showMFI = ref(false)
+const showBBI = ref(false)
+
+// 指标参数
+const ema1 = ref(20)
+const ema2 = ref(50)
+const ema3 = ref(200)
+const sma1 = ref(20)
+const sma2 = ref(50)
+const bbPeriod = ref(20)
+const bbStd = ref(2)
+const rsiPeriod = ref(14)
+const rsiOb = ref(70)
+const rsiOs = ref(30)
+const stochK = ref(14)
+const stochKSmooth = ref(3)
+const stochDSmooth = ref(3)
+const macdFast = ref(12)
+const macdSlow = ref(26)
+const macdSignal = ref(9)
+const atrPeriod = ref(14)
+const adxPeriod = ref(14)
+const diPeriod = ref(14)
+const mfiPeriod = ref(14)
+
+function parsePeriods(s: string): number[] {
+  return s.split(',').map(n => parseInt(n.trim())).filter(n => !isNaN(n) && n > 0)
+}
+
+function getEmaPeriods(): number[] { return [ema1.value, ema2.value, ema3.value].filter(n => n > 0) }
+function getSmaPeriods(): number[] { return [sma1.value, sma2.value].filter(n => n > 0) }
+
+// 参数变更时重建对应指标
+watch([showEMA, showSMA, showBB, ema1, ema2, ema3, sma1, sma2, bbPeriod, bbStd], () => {
+  applyOverlay()
+  saveTerminalConfig()
+})
+// 复选框切换时重建/销毁副图
+watch(showRSI, () => { destroyPane('rsi'); if (showRSI.value) applyRSI(); saveTerminalConfig() })
+watch(showStoch, () => { destroyPane('stoch'); if (showStoch.value) applyStoch(); saveTerminalConfig() })
+watch(showMACD, () => { destroyPane('macd'); if (showMACD.value) applyMACD(); saveTerminalConfig() })
+watch(showATR, () => { destroyPane('atr'); if (showATR.value) applyATR(); saveTerminalConfig() })
+watch(showVolume, () => { destroyPane('volume'); if (showVolume.value) applyVolume(); saveTerminalConfig() })
+watch(showADX, () => { destroyPane('adx'); if (showADX.value) applyADX(); saveTerminalConfig() })
+watch(showDI, () => { destroyPane('di'); if (showDI.value) applyDI(); saveTerminalConfig() })
+watch(showMFI, () => { destroyPane('mfi'); if (showMFI.value) applyMFI(); saveTerminalConfig() })
+watch(showBBI, () => { destroyPane('bbi'); if (showBBI.value) applyBBI(); saveTerminalConfig() })
+
+// 参数数值变更时刷新副图（代替无效的 @update:value="{...}" 语法）
+function refreshRSI() { destroyPane('rsi'); if (showRSI.value) applyRSI(); saveTerminalConfig() }
+function refreshStoch() { destroyPane('stoch'); if (showStoch.value) applyStoch(); saveTerminalConfig() }
+function refreshMACD() { destroyPane('macd'); if (showMACD.value) applyMACD(); saveTerminalConfig() }
+function refreshATR() { destroyPane('atr'); if (showATR.value) applyATR(); saveTerminalConfig() }
+
+const chartHeight = 420
+const paneHeight = 110
+
+let _syncLockVal: SyncLock = { value: false }
+function _chartRef(): ChartRef {
+  return {
+    chart, candleSeries, paneCharts, paneSeries,
+    chartContainer: chartContainer.value,
+    lock: _syncLockVal,
+  }
+}
+
+// ---- 十字光标跨图联动：任一动图同步所有图竖线 + 显示时间标签 ----
+let _crosshairTime: number | null = null
+
+// 构建 series 的 time → value 索引（供跨图同步取真实指标值）
+// indexSeriesValues 和 getPaneSeriesList 已抽离到 chartSync.ts
+// 此处保留包装器以兼容内部调用
+function getPaneSeriesList(name: string): any[] {
+  return _getPaneSeriesList(name, paneSeries)
+}
+
+// syncCrosshairToAll, clearCrosshairAll, updateCrosshairTimeLabel, onCrosshairMove
+// 已抽离到 chartSync.ts，内部调用使用包装器
+function onCrosshairMoveLocal(tc: any, param: any) {
+  onCrosshairMove(tc, param, _chartRef())
+}
+
+
+function makeChartOptions(width: number, height: number, showTimeScale: boolean): any {
+  const isDark = useAppStore().isDark
+  return {
+    layout: {
+      background: { type: ColorType.Solid, color: isDark ? '#1a1d23' : '#ffffff' },
+      textColor: isDark ? '#8b8f97' : '#555555',
+    },
+    grid: {
+      vertLines: { color: isDark ? '#2d3139' : '#e8e8e8' },
+      horzLines: { color: isDark ? '#2d3139' : '#e8e8e8' },
+    },
+    width,
+    height,
+    timeScale: {
+      timeVisible: false,
+      borderColor: isDark ? '#2d3139' : '#d0d0d0',
+      visible: showTimeScale,
+    },
+    rightPriceScale: { borderColor: isDark ? '#2d3139' : '#d0d0d0' },
+    crosshair: { mode: 0 },
+  }
+}
+
+onMounted(() => {
+  if (!chartContainer.value) return
+  const w = chartContainer.value.clientWidth
+
+  chart = createChart(chartContainer.value, makeChartOptions(w, chartHeight, true))
+
+  candleSeries = chart.addCandlestickSeries({
+    upColor: '#0ecb81',
+    downColor: '#f6465d',
+    borderUpColor: '#0ecb81',
+    borderDownColor: '#f6465d',
+    wickUpColor: '#0ecb81',
+    wickDownColor: '#f6465d',
+  })
+
+  // 先应用周期预设，再加载保存的配置覆盖（让保存的配置优先）
+  applyTfPreset()
+  loadTerminalConfig(true)  // 组件挂载时恢复上次使用的周期
+  loadCandles()
+
+  const observer = new ResizeObserver(() => {
+    if (chart && chartContainer.value) {
+      const nw = chartContainer.value.clientWidth
+      chart.applyOptions({ width: nw })
+      Object.values(paneCharts).forEach(pc => pc.applyOptions({ width: nw }))
+      requestAnimationFrame(() => syncAllPriceScaleWidths())
+    }
+  })
+  observer.observe(chartContainer.value)
+
+  // 双向时间轴同步：主图缩放 → 所有副图
+  chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+    syncAllChartsFrom(chart!, _chartRef())
+        // 检测用户滚动到左边缘时加载更多历史数据
+    try {
+      const range = chart!.timeScale().getVisibleLogicalRange()
+      if (range && range.from <= 3 && store.candles.length > 0) {
+        const firstCandle = store.candles[0]
+        if (typeof firstCandle.time === 'number') {
+          store.fetchMoreCandles(activeTf.value, firstCandle.time + 1, 500)
+        }
+      }
+    } catch {}
+  })
+  chart.subscribeCrosshairMove((param: any) => {
+    syncAllChartsFrom(chart!, _chartRef())
+    onCrosshairMove(chart!, param, _chartRef())
+      })
+
+  startAutoRefresh()
+
+  // 页面不可见时暂停轮询（切到别的 tab / 最小化），可见时恢复
+  // 省 CPU 和网络，也避免后台定时器触发重渲染拖慢前台导航
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+})
+
+function handleVisibilityChange() {
+  if (document.hidden) {
+    stopAutoRefresh()
+  } else {
+    startAutoRefresh()
+  }
+}
+
+onUnmounted(() => {
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
+  stopAutoRefresh()
+  chart?.remove()
+  Object.values(paneCharts).forEach(pc => pc.remove())
+})
+
+// ---- 主题切换响应：销毁并重建所有图表实例 ----
+const appStore = useAppStore()
+
+// 副图指标标签样式（颜色随主题切换：暗色白字 / 亮色深字）
+const paneLabelStyle = computed(() => ({
+  position: 'absolute',
+  top: '2px',
+  left: '8px',
+  fontSize: '13px',
+  fontWeight: '700',
+  color: appStore.isDark ? '#ffffff' : '#333333',
+  zIndex: '2',
+}))
+watch(() => appStore.isDark, () => {
+  // 1. 销毁所有图表
+  chart?.remove()
+  chart = null
+  candleSeries = null
+  overlaySeries = {}
+  Object.values(paneCharts).forEach(pc => pc.remove())
+  paneCharts = {}
+  paneSeries = {}
+
+  nextTick(() => {
+    if (!chartContainer.value) return
+    const w = chartContainer.value.clientWidth
+
+    // 2. 重建主图
+    chart = createChart(chartContainer.value, makeChartOptions(w, chartHeight, true))
+    candleSeries = chart.addCandlestickSeries({
+      upColor: '#0ecb81', downColor: '#f6465d',
+      borderUpColor: '#0ecb81', borderDownColor: '#f6465d',
+      wickUpColor: '#0ecb81', wickDownColor: '#f6465d',
+    })
+
+    // 3. 重新订阅主图事件
+    chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+      syncAllChartsFrom(chart!, _chartRef())
+            try {
+        const range = chart!.timeScale().getVisibleLogicalRange()
+        if (range && range.from <= 3 && store.candles.length > 0) {
+          const firstCandle = store.candles[0]
+          if (typeof firstCandle.time === 'number') {
+            store.fetchMoreCandles(activeTf.value, firstCandle.time + 1, 500)
+          }
+        }
+      } catch {}
+    })
+    chart.subscribeCrosshairMove((param: any) => {
+      syncAllChartsFrom(chart!, _chartRef())
+      onCrosshairMove(chart!, param, _chartRef())
+          })
+
+    // 4. 刷新 K 线数据 + 叠加指标
+    if (store.candles.length > 0) {
+      candleSeries.setData(sanitizeCandleData(store.candles))
+    }
+    applyOverlay()
+
+    // 5. 通过切换副图开关触发重建（watcher 会销毁旧实例并创建新主题实例）
+    const paneFlags: [any, boolean][] = [
+      [showRSI, showRSI.value], [showStoch, showStoch.value],
+      [showMACD, showMACD.value], [showATR, showATR.value],
+      [showVolume, showVolume.value], [showADX, showADX.value],
+      [showDI, showDI.value], [showMFI, showMFI.value],
+      [showBBI, showBBI.value],
+    ]
+    for (const [ref, wasOn] of paneFlags) {
+      if (wasOn) { ref.value = false; ref.value = true }
+    }
+
+    nextTick(() => {
+      scrollAllToRealTime()
+      requestAnimationFrame(() => syncAllPriceScaleWidths())
+    })
+  })
+})
+
+// 数值闪烁 — 内联实现，直接 watch store
+const bidFlash = ref(false)
+let _bTimer: any = null
+let _bLast = store.bid
+watch(() => store.bid, (n) => {
+  if (Math.abs(n - _bLast) < 0.01) return
+  _bLast = n
+  bidFlash.value = true
+  if (_bTimer) clearTimeout(_bTimer)
+  _bTimer = setTimeout(() => { bidFlash.value = false }, 600)
+})
+
+const askFlash = ref(false)
+let _aTimer: any = null
+let _aLast = store.ask
+watch(() => store.ask, (n) => {
+  if (Math.abs(n - _aLast) < 0.01) return
+  _aLast = n
+  askFlash.value = true
+  if (_aTimer) clearTimeout(_aTimer)
+  _aTimer = setTimeout(() => { askFlash.value = false }, 600)
+})
+
+const spreadFlash = ref(false)
+let _sTimer: any = null
+let _sLast = store.spread
+watch(() => store.spread, (n) => {
+  if (Math.abs(n - _sLast) < 0.01) return
+  _sLast = n
+  spreadFlash.value = true
+  if (_sTimer) clearTimeout(_sTimer)
+  _sTimer = setTimeout(() => { spreadFlash.value = false }, 600)
+})
+
+// K 线实时跳动：WebSocket tick 驱动 candleSeries.update() 更新最后一根
+// 时间戳偏移已修复，update 时间戳与缓存数据一致
+
+let _lastMid = -1
+watch([() => store.bid, () => store.ask], ([bid, ask]) => {
+  if (!candleSeries || bid <= 0 || ask <= 0) return
+  const mid = (bid + ask) / 2
+  if (Math.abs(mid - _lastMid) < 0.01) return
+  _lastMid = mid
+  const lastCandle = store.candles[store.candles.length - 1]
+  if (!lastCandle) return
+  try {
+    candleSeries.update({
+      time: lastCandle.time as UTCTimestamp,
+      open: lastCandle.open,
+      high: Math.max(lastCandle.high, mid),
+      low: Math.min(lastCandle.low, mid),
+      close: mid,
+    })
+  } catch (e) { /* ignore */ }
+})
+
+function getCandleData(): CandleData[] {
+  return store.candles.map(c => ({
+    time: c.time,
+    open: c.open,
+    high: c.high,
+    low: c.low,
+    close: c.close,
+    volume: (c as any).volume || 0,
+  }))
+}
+
+// 将指标数据填充 NaN 补齐到与 K 线等长，确保主图和副图数据点数量一致
+function padLinePoints(candles: CandleData[], points: LinePoint[]): LinePoint[] {
+  const map = new Map(points.map(p => [p.time, p.value]))
+  return candles.map(c => ({ time: c.time, value: map.get(c.time) ?? NaN }))
+}
+function padBandPoints(candles: CandleData[], points: BandPoint[], field: 'upper' | 'middle' | 'lower'): LinePoint[] {
+  const map = new Map(points.map(p => [p.time, p[field]]))
+  return candles.map(c => ({ time: c.time, value: map.get(c.time) ?? NaN }))
+}
+function padHistogram(candles: CandleData[], points: HistogramPoint[]): HistogramPoint[] {
+  const map = new Map(points.map(p => [p.time, p]))
+  return candles.map(c => map.get(c.time) ?? { time: c.time, value: NaN })
+}
+
+// ---- 主图叠加指标 ----
+function applyOverlay() {
+  const data = getCandleData()
+  if (!chart || data.length === 0) return
+
+  // EMA
+  const emaColors = ['#f0b90b', '#e88b37', '#ef3b6d', '#0ecb81', '#8b8f97']
+  if (showEMA.value) {
+    const periods = getEmaPeriods()
+    periods.forEach((p, i) => {
+      const key = `ema${p}`
+      ensureOverlaySeries(key, { color: emaColors[i % emaColors.length], lineWidth: 1 })
+      overlaySeries[key].setData(castTime(padLinePoints(data, calcEMA(data, p))))
+    })
+  }
+  // 清理不在参数列表中的 EMA 系列（取消勾选时全部清理）
+  const emaKeys = showEMA.value ? getEmaPeriods().map(p => `ema${p}`) : []
+  Object.keys(overlaySeries).forEach(k => {
+    if (k.startsWith('ema') && !emaKeys.includes(k)) removeOverlaySeries(k)
+  })
+
+  // SMA
+  const smaColors = ['#0ecb81', '#f6465d', '#f0b90b', '#e88b37', '#8b8f97']
+  if (showSMA.value) {
+    const periods = getSmaPeriods()
+    periods.forEach((p, i) => {
+      const key = `sma${p}`
+      ensureOverlaySeries(key, { color: smaColors[i % smaColors.length], lineWidth: 1, lineStyle: 2 })
+      overlaySeries[key].setData(castTime(padLinePoints(data, calcSMA(data, p))))
+    })
+  }
+  const smaKeys = showSMA.value ? getSmaPeriods().map(p => `sma${p}`) : []
+  Object.keys(overlaySeries).forEach(k => {
+    if (k.startsWith('sma') && !smaKeys.includes(k)) removeOverlaySeries(k)
+  })
+
+  // Bollinger Bands
+  if (showBB.value) {
+    const bb = calcBollinger(data, bbPeriod.value, bbStd.value)
+    ensureOverlaySeries('bb_upper', { color: '#8b8f97', lineWidth: 1, lineStyle: 2 })
+    ensureOverlaySeries('bb_middle', { color: '#f0b90b', lineWidth: 1 })
+    ensureOverlaySeries('bb_lower', { color: '#8b8f97', lineWidth: 1, lineStyle: 2 })
+    overlaySeries['bb_upper'].setData(castTime(padBandPoints(data, bb, 'upper')))
+    overlaySeries['bb_middle'].setData(castTime(padBandPoints(data, bb, 'middle')))
+    overlaySeries['bb_lower'].setData(castTime(padBandPoints(data, bb, 'lower')))
+  } else {
+    removeOverlaySeries('bb_upper')
+    removeOverlaySeries('bb_middle')
+    removeOverlaySeries('bb_lower')
+  }
+}
+
+function ensureOverlaySeries(key: string, opts: any) {
+  if (!chart || overlaySeries[key]) return
+  overlaySeries[key] = chart.addLineSeries({
+    color: opts.color,
+    lineWidth: opts.lineWidth || 1,
+    lineStyle: opts.lineStyle || 0,
+    priceLineVisible: false,
+    lastValueVisible: false,
+  })
+}
+
+function removeOverlaySeries(key: string) {
+  if (!chart || !overlaySeries[key]) return
+  chart.removeSeries(overlaySeries[key])
+  delete overlaySeries[key]
+}
+
+// ---- 副图 ----
+function destroyPane(name: string) {
+  const pc = paneCharts[name]
+  if (pc) { pc.remove(); delete paneCharts[name] }
+  delete paneSeries[name]
+}
+
+function applyRSI() {
+  if (!showRSI.value) { destroyPane('rsi'); return }
+  const data = getCandleData()
+  if (data.length === 0) return
+  const rsiData = padLinePoints(data, calcRSI(data, rsiPeriod.value))
+
+  nextTick(() => {
+    const container = getPaneEl('rsi')
+    if (!container || !chart) return
+    const w = chartContainer.value!.clientWidth
+
+    let pc = paneCharts['rsi']
+    if (!pc) {
+      pc = createChart(container, makeChartOptions(w, paneHeight, false))
+      paneCharts['rsi'] = pc
+      pc.subscribeCrosshairMove((param: any) => onCrosshairMove(pc, param, _chartRef()))
+      pc.timeScale().subscribeVisibleLogicalRangeChange(() => { syncAllChartsFrom(pc, _chartRef()) })
+    }
+
+    if (!paneSeries['rsi']) {
+      const series = pc.addLineSeries({
+        color: '#f0b90b', lineWidth: 1, priceLineVisible: false, lastValueVisible: true,
+        priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+      })
+      const overbought = pc.addLineSeries({
+        color: '#f6465d', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false,
+        priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+      })
+      const oversold = pc.addLineSeries({
+        color: '#0ecb81', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false,
+        priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+      })
+      overbought.setData(castTime(data.map(c => ({ time: c.time, value: rsiOb.value }))))
+      oversold.setData(castTime(data.map(c => ({ time: c.time, value: rsiOs.value }))))
+      paneSeries['rsi'] = { series, overbought, oversold }
+      pc.priceScale('right').applyOptions({ scaleMargins: { top: 0.05, bottom: 0.05 } })
+    }
+
+    paneSeries['rsi'].series.setData(castTime(rsiData))
+    syncPaneRange('rsi')
+    requestAnimationFrame(() => syncAllPriceScaleWidths())
+  })
+}
+
+function applyStoch() {
+  if (!showStoch.value) { destroyPane('stoch'); return }
+  const data = getCandleData()
+  if (data.length === 0) return
+  const stoch = calcStoch(data, stochK.value, stochKSmooth.value, stochDSmooth.value)
+  const stochKData = padLinePoints(data, stoch.k)
+  const stochDData = padLinePoints(data, stoch.d)
+
+  nextTick(() => {
+    const container = getPaneEl('stoch')
+    if (!container || !chart) return
+    const w = chartContainer.value!.clientWidth
+
+    let pc = paneCharts['stoch']
+    if (!pc) {
+      pc = createChart(container, makeChartOptions(w, paneHeight, false))
+      paneCharts['stoch'] = pc
+      pc.subscribeCrosshairMove((param: any) => onCrosshairMove(pc, param, _chartRef()))
+      pc.timeScale().subscribeVisibleLogicalRangeChange(() => { syncAllChartsFrom(pc, _chartRef()) })
+    }
+
+    if (!paneSeries['stoch']) {
+      const kSeries = pc.addLineSeries({
+        color: '#f0b90b', lineWidth: 1, priceLineVisible: false, lastValueVisible: true,
+      })
+      const dSeries = pc.addLineSeries({
+        color: '#e88b37', lineWidth: 1, priceLineVisible: false, lastValueVisible: true,
+      })
+      const stochOb = pc.addLineSeries({
+        color: '#f6465d', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false,
+      })
+      const stochOs = pc.addLineSeries({
+        color: '#0ecb81', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false,
+      })
+      paneSeries['stoch'] = { k: kSeries, d: dSeries, ob: stochOb, os: stochOs }
+    }
+
+    paneSeries['stoch'].k.setData(castTime(stochKData))
+    paneSeries['stoch'].d.setData(castTime(stochDData))
+    // 80/20 参考线（常量数据，与 K 线等长）
+    const stochRefData = data.map(d => ({ time: d.time, value: 80 }))
+    const stochRefData20 = data.map(d => ({ time: d.time, value: 20 }))
+    paneSeries['stoch'].ob.setData(castTime(stochRefData))
+    paneSeries['stoch'].os.setData(castTime(stochRefData20))
+    syncPaneRange('stoch')
+    requestAnimationFrame(() => syncAllPriceScaleWidths())
+  })
+}
+
+function applyMACD() {
+  if (!showMACD.value) { destroyPane('macd'); return }
+  const data = getCandleData()
+  if (data.length === 0) return
+  const macd = calcMACD(data, macdFast.value, macdSlow.value, macdSignal.value)
+  const macdLineData = padLinePoints(data, macd.macd)
+  const signalData = padLinePoints(data, macd.signal)
+  const histData = padHistogram(data, macd.histogram)
+
+  nextTick(() => {
+    const container = getPaneEl('macd')
+    if (!container || !chart) return
+    const w = chartContainer.value!.clientWidth
+
+    let pc = paneCharts['macd']
+    if (!pc) {
+      pc = createChart(container, makeChartOptions(w, paneHeight, false))
+      paneCharts['macd'] = pc
+      pc.subscribeCrosshairMove((param: any) => onCrosshairMove(pc, param, _chartRef()))
+      pc.timeScale().subscribeVisibleLogicalRangeChange(() => { syncAllChartsFrom(pc, _chartRef()) })
+    }
+
+    if (!paneSeries['macd']) {
+      const macdSeries = pc.addLineSeries({
+        color: '#f0b90b', lineWidth: 1, priceLineVisible: false, lastValueVisible: true,
+      })
+      const signalSeries = pc.addLineSeries({
+        color: '#e88b37', lineWidth: 1, priceLineVisible: false, lastValueVisible: true,
+      })
+      const histSeries = pc.addHistogramSeries({
+        priceLineVisible: false, lastValueVisible: true,
+      })
+      paneSeries['macd'] = { macd: macdSeries, signal: signalSeries, histogram: histSeries }
+    }
+
+    paneSeries['macd'].macd.setData(castTime(macdLineData))
+    paneSeries['macd'].signal.setData(castTime(signalData))
+    paneSeries['macd'].histogram.setData(castTime(histData))
+    syncPaneRange('macd')
+    requestAnimationFrame(() => syncAllPriceScaleWidths())
+  })
+}
+
+function applyATR() {
+  if (!showATR.value) { destroyPane('atr'); return }
+  const data = getCandleData()
+  if (data.length === 0) return
+  const atrData = padLinePoints(data, calcATR(data, atrPeriod.value))
+
+  nextTick(() => {
+    const container = getPaneEl('atr')
+    if (!container || !chart) return
+    const w = chartContainer.value!.clientWidth
+
+    let pc = paneCharts['atr']
+    if (!pc) {
+      pc = createChart(container, makeChartOptions(w, paneHeight, false))
+      paneCharts['atr'] = pc
+      pc.subscribeCrosshairMove((param: any) => onCrosshairMove(pc, param, _chartRef()))
+      pc.timeScale().subscribeVisibleLogicalRangeChange(() => { syncAllChartsFrom(pc, _chartRef()) })
+    }
+
+    if (!paneSeries['atr']) {
+      paneSeries['atr'] = pc.addLineSeries({
+        color: '#0ecb81', lineWidth: 1, priceLineVisible: false, lastValueVisible: true,
+      })
+    }
+
+    paneSeries['atr'].setData(castTime(atrData))
+    syncPaneRange('atr')
+    requestAnimationFrame(() => syncAllPriceScaleWidths())
+  })
+}
+
+function applyVolume() {
+  if (!showVolume.value) { destroyPane('volume'); return }
+  const data = getCandleData()
+  if (data.length === 0) return
+  const vol = calcVolume(data)
+
+  nextTick(() => {
+    const container = getPaneEl('volume')
+    if (!container || !chart) return
+    const w = chartContainer.value!.clientWidth
+
+    let pc = paneCharts['volume']
+    if (!pc) {
+      pc = createChart(container, makeChartOptions(w, paneHeight, false))
+      paneCharts['volume'] = pc
+      pc.subscribeCrosshairMove((param: any) => onCrosshairMove(pc, param, _chartRef()))
+      pc.timeScale().subscribeVisibleLogicalRangeChange(() => { syncAllChartsFrom(pc, _chartRef()) })
+    }
+
+    if (!paneSeries['volume']) {
+      paneSeries['volume'] = pc.addHistogramSeries({
+        priceLineVisible: false, lastValueVisible: true,
+      })
+      pc.priceScale('right').applyOptions({ scaleMargins: { top: 0.05, bottom: 0.05 } })
+    }
+
+    paneSeries['volume'].setData(castTime(vol))
+    syncPaneRange('volume')
+    requestAnimationFrame(() => syncAllPriceScaleWidths())
+  })
+}
+
+function applyADX() {
+  if (!showADX.value) { destroyPane('adx'); return }
+  const data = getCandleData()
+  if (data.length === 0) return
+  const { adx } = calcADX(data, adxPeriod.value)
+  if (adx.length === 0) return
+  const adxData = padLinePoints(data, adx)
+
+  nextTick(() => {
+    const container = getPaneEl('adx')
+    if (!container || !chart) return
+    const w = chartContainer.value!.clientWidth
+
+    let pc = paneCharts['adx']
+    if (!pc) {
+      pc = createChart(container, makeChartOptions(w, paneHeight, false))
+      paneCharts['adx'] = pc
+      pc.subscribeCrosshairMove((param: any) => onCrosshairMove(pc, param, _chartRef()))
+      pc.timeScale().subscribeVisibleLogicalRangeChange(() => { syncAllChartsFrom(pc, _chartRef()) })
+    }
+
+    if (!paneSeries['adx']) {
+      paneSeries['adx'] = pc.addLineSeries({
+        color: '#f0b90b', lineWidth: 2, priceLineVisible: false, lastValueVisible: true,
+        priceFormat: { type: 'price', precision: 1, minMove: 0.1 },
+      })
+      // ADX 25 参考线（趋势强度阈值）
+      const adx25 = pc.addLineSeries({
+        color: '#8b8f97', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false,
+        priceFormat: { type: 'price', precision: 1, minMove: 0.1 },
+      })
+      paneSeries['adx25'] = adx25
+    }
+
+    paneSeries['adx'].setData(castTime(adxData))
+    // ADX 25 线（常量数据）
+    const adx25Data = data.map(d => ({ time: d.time, value: 25 }))
+    paneSeries['adx25'].setData(castTime(adx25Data))
+    syncPaneRange('adx')
+    requestAnimationFrame(() => syncAllPriceScaleWidths())
+  })
+}
+
+function applyDI() {
+  if (!showDI.value) { destroyPane('di'); return }
+  const data = getCandleData()
+  if (data.length === 0) return
+  const { pdi, ndi } = calcADX(data, diPeriod.value)
+  if (pdi.length === 0) return
+  const pdiData = padLinePoints(data, pdi)
+  const ndiData = padLinePoints(data, ndi)
+
+  nextTick(() => {
+    const container = getPaneEl('di')
+    if (!container || !chart) return
+    const w = chartContainer.value!.clientWidth
+
+    let pc = paneCharts['di']
+    if (!pc) {
+      pc = createChart(container, makeChartOptions(w, paneHeight, false))
+      paneCharts['di'] = pc
+      pc.subscribeCrosshairMove((param: any) => onCrosshairMove(pc, param, _chartRef()))
+      pc.timeScale().subscribeVisibleLogicalRangeChange(() => { syncAllChartsFrom(pc, _chartRef()) })
+    }
+
+    if (!paneSeries['di']) {
+      paneSeries['di'] = {
+        pdi: pc.addLineSeries({
+          color: '#0ecb81', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: true,
+          priceFormat: { type: 'price', precision: 1, minMove: 0.1 },
+        }),
+        ndi: pc.addLineSeries({
+          color: '#f6465d', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: true,
+          priceFormat: { type: 'price', precision: 1, minMove: 0.1 },
+        }),
+        di_ref20: pc.addLineSeries({
+          color: '#8b8f97', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false,
+          priceFormat: { type: 'price', precision: 1, minMove: 0.1 },
+        }),
+        di_ref30: pc.addLineSeries({
+          color: '#8b8f97', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false,
+          priceFormat: { type: 'price', precision: 1, minMove: 0.1 },
+        }),
+      }
+    }
+
+    paneSeries['di'].pdi.setData(castTime(pdiData))
+    paneSeries['di'].ndi.setData(castTime(ndiData))
+    const ref20Data = data.map(d => ({ time: d.time, value: 20 }))
+    const ref30Data = data.map(d => ({ time: d.time, value: 30 }))
+    paneSeries['di'].di_ref20.setData(castTime(ref20Data))
+    paneSeries['di'].di_ref30.setData(castTime(ref30Data))
+    syncPaneRange('di')
+    requestAnimationFrame(() => syncAllPriceScaleWidths())
+  })
+}
+
+function applyMFI() {
+  if (!showMFI.value) { destroyPane('mfi'); return }
+  const data = getCandleData()
+  if (data.length === 0) return
+  const mfiData = padLinePoints(data, calcMFI(data, mfiPeriod.value))
+  if (mfiData.length === 0) return
+
+  nextTick(() => {
+    const container = getPaneEl('mfi')
+    if (!container || !chart) return
+    const w = chartContainer.value!.clientWidth
+
+    let pc = paneCharts['mfi']
+    if (!pc) {
+      pc = createChart(container, makeChartOptions(w, paneHeight, false))
+      paneCharts['mfi'] = pc
+      pc.subscribeCrosshairMove((param: any) => onCrosshairMove(pc, param, _chartRef()))
+      pc.timeScale().subscribeVisibleLogicalRangeChange(() => { syncAllChartsFrom(pc, _chartRef()) })
+    }
+
+    if (!paneSeries['mfi']) {
+      paneSeries['mfi'] = pc.addLineSeries({
+        color: '#f0b90b', lineWidth: 1, priceLineVisible: false, lastValueVisible: true,
+        priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+      })
+      // Add 80/20 reference lines
+      const obLine = pc.addLineSeries({
+        color: '#f6465d', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false,
+        priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+      })
+      const osLine = pc.addLineSeries({
+        color: '#0ecb81', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false,
+        priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+      })
+      const midLine = pc.addLineSeries({
+        color: '#888', lineWidth: 1, lineStyle: 3, priceLineVisible: false, lastValueVisible: false,
+        priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+      })
+      const last = mfiData[mfiData.length - 1]
+      obLine.setData([{ time: mfiData[0].time, value: 80 }, { time: last.time, value: 80 }])
+      osLine.setData([{ time: mfiData[0].time, value: 20 }, { time: last.time, value: 20 }])
+      midLine.setData([{ time: mfiData[0].time, value: 50 }, { time: last.time, value: 50 }])
+    }
+
+    paneSeries['mfi'].setData(castTime(mfiData))
+    syncPaneRange('mfi')
+    requestAnimationFrame(() => syncAllPriceScaleWidths())
+  })
+}
+
+function applyBBI() {
+  if (!showBBI.value) { destroyPane('bbi'); return }
+  const data = getCandleData()
+  if (data.length === 0) return
+  // BBI = (SMA3 + SMA6 + SMA12 + SMA24) / 4
+  const sma3 = calcSMA(data, 3).map(p => p.value)
+  const sma6 = calcSMA(data, 6).map(p => p.value)
+  const sma12 = calcSMA(data, 12).map(p => p.value)
+  const sma24 = calcSMA(data, 24).map(p => p.value)
+  const minLen = Math.min(sma3.length, sma6.length, sma12.length, sma24.length)
+  if (minLen < 1) return
+  const offset = data.length - minLen
+  const bbi: { time: number; value: number }[] = []
+  for (let i = 0; i < minLen; i++) {
+    bbi.push({ time: data[offset + i].time, value: (sma3[i] + sma6[i] + sma12[i] + sma24[i]) / 4 })
+  }
+  // A 线（收盘价线）
+  const price: { time: number; value: number }[] = data.map(c => ({ time: c.time, value: c.close }))
+
+  nextTick(() => {
+    const container = getPaneEl('bbi')
+    if (!container || !chart) return
+    const w = chartContainer.value!.clientWidth
+
+    let pc = paneCharts['bbi']
+    if (!pc) {
+      pc = createChart(container, makeChartOptions(w, paneHeight, false))
+      paneCharts['bbi'] = pc
+      pc.subscribeCrosshairMove((param: any) => onCrosshairMove(pc, param, _chartRef()))
+      pc.timeScale().subscribeVisibleLogicalRangeChange(() => { syncAllChartsFrom(pc, _chartRef()) })
+    }
+
+    if (!paneSeries['bbi']) {
+      const bbiLine = pc.addLineSeries({
+        color: '#8b5cf6', lineWidth: 2, priceLineVisible: false, lastValueVisible: true,
+        priceFormat: { type: 'price', precision: 1, minMove: 0.1 },
+      })
+      const priceLine = pc.addLineSeries({
+        color: '#f0b90b', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false,
+        priceFormat: { type: 'price', precision: 1, minMove: 0.1 },
+      })
+      paneSeries['bbi'] = { line: bbiLine, price: priceLine }
+    }
+
+    paneSeries['bbi'].line.setData(castTime(bbi))
+    paneSeries['bbi'].price.setData(castTime(price))
+    syncPaneRange('bbi')
+    requestAnimationFrame(() => syncAllPriceScaleWidths())
+  })
+}
+
+function syncPriceScaleWidth(name: string) {
+  const pc = paneCharts[name]
+  if (!pc || !chart) return
+  const target = chart.priceScale('right').width()
+  if (target > 0) {
+    pc.priceScale('right').applyOptions({ minimumWidth: target })
+  }
+}
+
+function syncPaneRange(name: string) {
+  const pc = paneCharts[name]
+  if (!pc || !chart) return
+  const range = chart.timeScale().getVisibleLogicalRange()
+  if (range) pc.timeScale().setVisibleLogicalRange(range)
+}
+
+function syncAllPanes() {
+  if (!chart) return
+  for (const name of Object.keys(paneCharts)) {
+    syncPaneRange(name)
+  }
+}
+
+function scrollAllToRealTime() {
+  chart?.timeScale().scrollToRealTime()
+  Object.values(paneCharts).forEach(pc => pc.timeScale().scrollToRealTime())
+}
+
+function syncAllPriceScaleWidths() {
+  if (!chart) return
+  // 取所有图（含主图）价格刻度的最大宽度，统一设为该值
+  const allCharts = [chart, ...Object.values(paneCharts)]
+  let maxWidth = 0
+  for (const c of allCharts) {
+    const w = c.priceScale('right').width()
+    if (w > maxWidth) maxWidth = w
+  }
+  if (maxWidth <= 0) return
+  for (const c of allCharts) {
+    c.priceScale('right').applyOptions({ minimumWidth: maxWidth })
+  }
+}
+
+// ---- 数据加载 ----
+async function loadCandles() {
+  await store.fetchCandles(activeTf.value, 2000)
+  if (candleSeries && store.candles.length > 0) {
+    try { candleSeries.setData(sanitizeCandleData(store.candles)) }
+  catch (e) { console.warn('[K线] setData失败', e) }
+    // 先计算所有指标（异步创建副图）
+    afterDataLoad()
+    // 等所有副图创建完毕后，统一右对齐所有图表
+    nextTick(() => {
+      scrollAllToRealTime()
+      // 等主图渲染完毕后，统一副图价格刻度宽度（使 K 线区域右对齐）
+      requestAnimationFrame(() => syncAllPriceScaleWidths())
+    })
+  }
+}
+
+function afterDataLoad() {
+  applyOverlay()
+  applyRSI()
+  applyStoch()
+  applyMACD()
+  applyATR()
+  applyVolume()
+  applyADX()
+  applyDI()
+  applyMFI()
+  applyBBI()
+}
+
+/** 根据当前周期应用预设指标 */
+function applyTfPreset() {
+  const preset = tfIndicatorPresets[activeTf.value]
+  if (!preset) return
+  showRSI.value = preset.rsi ?? false
+  showStoch.value = preset.stoch ?? false
+  showMACD.value = preset.macd ?? false
+  showBB.value = preset.bb ?? false
+  showVolume.value = preset.volume ?? false
+  showEMA.value = false
+  showSMA.value = false
+  showATR.value = false
+  showADX.value = preset.adx ?? false
+  showDI.value = false
+  showMFI.value = preset.mfi ?? false
+  showBBI.value = preset.bbi ?? false
+}
+
+async function switchTf(tf: string) {
+  // 先保存当前周期配置
+  saveTerminalConfig()
+  activeTf.value = tf
+  stopAutoRefresh()
+  clearAllOverlays()
+  clearAllPanes()
+  // 尝试加载目标周期已保存的配置，否则用预设
+  applyTfPreset()
+  loadTerminalConfig()
+  await loadCandles()
+  startAutoRefresh()
+  saveTerminalConfig()
+}
+
+function clearAllOverlays() {
+  if (!chart) return
+  Object.keys(overlaySeries).forEach(k => {
+    chart!.removeSeries(overlaySeries[k])
+    delete overlaySeries[k]
+  })
+}
+
+function clearAllPanes() {
+  Object.keys(paneCharts).forEach(k => {
+    paneCharts[k].remove()
+    delete paneCharts[k]
+  })
+  Object.keys(paneSeries).forEach(k => delete paneSeries[k])
+}
+
+</script>
+
+<template>
+  <n-card :title="$t('terminal.title')" size="small">
+    <template #header-extra>
+      <n-space size="small" align="center">
+        <span class="price-mini" style="font-size:12px;margin-right:8px;">
+          <n-text depth="3">Bid</n-text> <span class="price-up" :class="{'flash-num':bidFlash}"><strong>{{ store.bid.toFixed(2) }}</strong></span>
+          <n-text depth="3" style="margin-left:6px;">Ask</n-text> <span class="price-down" :class="{'flash-num':askFlash}"><strong>{{ store.ask.toFixed(2) }}</strong></span>
+          <n-text depth="3" style="margin-left:6px;">Spr</n-text> <strong :class="{'flash-num':spreadFlash}">{{ store.spread.toFixed(1) }}</strong>
+        </span>
+        <n-button v-for="tf in timeframes" :key="tf" size="tiny"
+                  :type="activeTf === tf ? 'primary' : 'default'"
+                  @click="switchTf(tf)">
+          {{ tf }}
+        </n-button>
+      </n-space>
+    </template>
+
+    <!-- 网格布局：每格宽度一致，避免内容不齐 -->
+    <n-grid :cols="6" :x-gap="6" :y-gap="2" style="margin-bottom: 6px;">
+      <!-- 第一行：EMA, SMA, BB, RSI, Stoch, MACD -->
+      <n-gi>
+        <div class="ind-line">
+          <span class="ind-cb"><n-checkbox v-model:checked="showEMA" size="small" @update:checked="applyOverlay">EMA</n-checkbox></span>
+          <span :class="['ind-params', { 'ind-hidden': !showEMA }]">
+            <app-input-number v-model:value="ema1" size="tiny" :min="2" :max="999" style="width: 20px;" @update:value="applyOverlay" />
+            <app-input-number v-model:value="ema2" size="tiny" :min="2" :max="999" style="width: 20px;" @update:value="applyOverlay" />
+            <app-input-number v-model:value="ema3" size="tiny" :min="2" :max="999" style="width: 20px;" @update:value="applyOverlay" />
+          </span>
+        </div>
+      </n-gi>
+      <n-gi>
+        <div class="ind-line">
+          <span class="ind-cb"><n-checkbox v-model:checked="showSMA" size="small" @update:checked="applyOverlay">SMA</n-checkbox></span>
+          <span :class="['ind-params', { 'ind-hidden': !showSMA }]">
+            <app-input-number v-model:value="sma1" size="tiny" :min="2" :max="999" style="width: 20px;" @update:value="applyOverlay" />
+            <app-input-number v-model:value="sma2" size="tiny" :min="2" :max="999" style="width: 20px;" @update:value="applyOverlay" />
+          </span>
+        </div>
+      </n-gi>
+      <n-gi>
+        <div class="ind-line">
+          <span class="ind-cb"><n-checkbox v-model:checked="showBB" size="small" @update:checked="applyOverlay">BB</n-checkbox></span>
+          <span :class="['ind-params', { 'ind-hidden': !showBB }]">
+            <app-input-number v-model:value="bbPeriod" size="tiny" :min="2" :max="200" style="width: 20px;" @update:value="applyOverlay" />
+            <n-text depth="3" style="font-size:10px;">×</n-text>
+            <app-input-number v-model:value="bbStd" size="tiny" :min="1" :max="5" :step="0.1" style="width: 20px;" @update:value="applyOverlay" />
+          </span>
+        </div>
+      </n-gi>
+      <n-gi>
+        <div class="ind-line">
+          <span class="ind-cb"><n-checkbox v-model:checked="showRSI" size="small">RSI</n-checkbox></span>
+          <span :class="['ind-params', { 'ind-hidden': !showRSI }]">
+            <app-input-number v-model:value="rsiPeriod" size="tiny" :min="2" :max="100" style="width: 20px;" @update:value="refreshRSI" />
+            <app-input-number v-model:value="rsiOb" size="tiny" :min="50" :max="100" style="width: 20px;" @update:value="refreshRSI" />
+            <app-input-number v-model:value="rsiOs" size="tiny" :min="0" :max="50" style="width: 20px;" @update:value="refreshRSI" />
+          </span>
+        </div>
+      </n-gi>
+      <n-gi>
+        <div class="ind-line">
+          <span class="ind-cb"><n-checkbox v-model:checked="showStoch" size="small">Stoch</n-checkbox></span>
+          <span :class="['ind-params', { 'ind-hidden': !showStoch }]">
+            <app-input-number v-model:value="stochK" size="tiny" :min="2" :max="100" style="width: 20px;" @update:value="refreshStoch" />
+            <app-input-number v-model:value="stochKSmooth" size="tiny" :min="1" :max="20" style="width: 20px;" @update:value="refreshStoch" />
+            <app-input-number v-model:value="stochDSmooth" size="tiny" :min="1" :max="20" style="width: 20px;" @update:value="refreshStoch" />
+          </span>
+        </div>
+      </n-gi>
+      <n-gi>
+        <div class="ind-line">
+          <span class="ind-cb"><n-checkbox v-model:checked="showMACD" size="small">MACD</n-checkbox></span>
+          <span :class="['ind-params', { 'ind-hidden': !showMACD }]">
+            <app-input-number v-model:value="macdFast" size="tiny" :min="2" :max="200" style="width: 20px;" @update:value="refreshMACD" />
+            <app-input-number v-model:value="macdSlow" size="tiny" :min="2" :max="200" style="width: 20px;" @update:value="refreshMACD" />
+            <app-input-number v-model:value="macdSignal" size="tiny" :min="1" :max="50" style="width: 20px;" @update:value="refreshMACD" />
+          </span>
+        </div>
+      </n-gi>
+      <!-- 第二行：ATR, Volume, ADX, DI, MFI, BBI -->
+      <n-gi>
+        <div class="ind-line">
+          <span class="ind-cb"><n-checkbox v-model:checked="showATR" size="small">ATR</n-checkbox></span>
+          <span :class="['ind-params', { 'ind-hidden': !showATR }]">
+            <app-input-number v-model:value="atrPeriod" size="tiny" :min="2" :max="100" style="width: 20px;" @update:value="refreshATR" />
+          </span>
+        </div>
+      </n-gi>
+      <n-gi>
+        <div class="ind-line">
+          <span class="ind-cb"><n-checkbox v-model:checked="showVolume" size="small">{{ $t('terminal.volume') }}</n-checkbox></span>
+          <span :class="['ind-params', { 'ind-hidden': !showVolume }]"><span class="ind-placeholder"></span></span>
+        </div>
+      </n-gi>
+      <n-gi>
+        <div class="ind-line">
+          <span class="ind-cb"><n-checkbox v-model:checked="showADX" size="small">ADX</n-checkbox></span>
+          <span :class="['ind-params', { 'ind-hidden': !showADX }]">
+            <app-input-number v-model:value="adxPeriod" size="tiny" :min="2" :max="100" style="width: 20px;" />
+          </span>
+        </div>
+      </n-gi>
+      <n-gi>
+        <div class="ind-line">
+          <span class="ind-cb"><n-checkbox v-model:checked="showDI" size="small">DI</n-checkbox></span>
+          <span :class="['ind-params', { 'ind-hidden': !showDI }]">
+            <app-input-number v-model:value="diPeriod" size="tiny" :min="2" :max="100" style="width: 20px;" />
+          </span>
+        </div>
+      </n-gi>
+      <n-gi>
+        <div class="ind-line">
+          <span class="ind-cb"><n-checkbox v-model:checked="showMFI" size="small">MFI</n-checkbox></span>
+          <span :class="['ind-params', { 'ind-hidden': !showMFI }]">
+            <app-input-number v-model:value="mfiPeriod" size="tiny" :min="2" :max="100" style="width: 20px;" />
+          </span>
+        </div>
+      </n-gi>
+      <n-gi>
+        <div class="ind-line">
+          <span class="ind-cb"><n-checkbox v-model:checked="showBBI" size="small">BBI</n-checkbox></span>
+          <span :class="['ind-params', { 'ind-hidden': !showBBI }]"><span class="ind-placeholder"></span></span>
+        </div>
+      </n-gi>
+    </n-grid>
+
+    <!-- 主图 + 加载/空态覆盖 -->
+    <div ref="chartContainer" style="width: 100%; height: 420px; position: relative;">
+      <div v-if="store.loading" :style="{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: useAppStore().isDark ? '#1a1d23' : '#f5f5f5', zIndex: 1 }">
+        <n-spin size="large" />
+      </div>
+      <div v-else-if="!store.loading && store.candles.length === 0" :style="{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: useAppStore().isDark ? '#1a1d23' : '#f5f5f5', zIndex: 1 }">
+        <n-result status="info" :title="$t('terminal.no_data')" :description="$t('terminal.no_data_desc')" size="small" />
+      </div>
+    </div>
+
+    <!-- 副图区域（按需渲染） -->
+    <div v-if="showRSI" ref="rsiRef" style="width: 100%; height: 110px; position: relative;">
+      <n-text depth="3" :style="paneLabelStyle">{{ $t('terminal.rsi_label', {period: rsiPeriod, ob: rsiOb, os: rsiOs}) }}</n-text>
+    </div>
+    <div v-if="showStoch" ref="stochRef" style="width: 100%; height: 110px; position: relative;">
+      <n-text depth="3" :style="paneLabelStyle">Stoch ({{ stochK }},{{ stochKSmooth }},{{ stochDSmooth }})</n-text>
+    </div>
+    <div v-if="showMACD" ref="macdRef" style="width: 100%; height: 110px; position: relative;">
+      <n-text depth="3" :style="paneLabelStyle">MACD ({{ macdFast }},{{ macdSlow }},{{ macdSignal }})</n-text>
+    </div>
+    <div v-if="showATR" ref="atrRef" style="width: 100%; height: 110px; position: relative;">
+      <n-text depth="3" :style="paneLabelStyle">ATR ({{ atrPeriod }})</n-text>
+    </div>
+    <div v-if="showVolume" ref="volRef" style="width: 100%; height: 110px; position: relative;">
+      <n-text depth="3" :style="paneLabelStyle">Volume</n-text>
+    </div>
+    <div v-if="showADX" ref="adxRef" style="width: 100%; height: 110px; position: relative;">
+      <n-text depth="3" :style="paneLabelStyle">ADX ({{ adxPeriod }})</n-text>
+    </div>
+    <div v-if="showDI" ref="diRef" style="width: 100%; height: 110px; position: relative;">
+      <n-text depth="3" :style="paneLabelStyle">DI ({{ diPeriod }})</n-text>
+    </div>
+    <div v-if="showMFI" ref="mfiRef" style="width: 100%; height: 110px; position: relative;">
+      <n-text depth="3" :style="paneLabelStyle">MFI ({{ mfiPeriod }})</n-text>
+    </div>
+    <div v-if="showBBI" ref="bbiRef" style="width: 100%; height: 110px; position: relative;">
+      <n-text depth="3" :style="paneLabelStyle">BBI</n-text>
+    </div>
+  </n-card>
+</template>
+
+<style scoped>
+.ind-line {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+  min-height: 44px;
+}
+.ind-cb {
+  display: inline-flex;
+  align-items: center;
+  min-width: 72px;
+}
+.ind-params {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+}
+.ind-hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+.ind-placeholder {
+  display: inline-block;
+  width: 20px;
+}
+</style>

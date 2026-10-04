@@ -1,0 +1,844 @@
+<script setup lang="ts">
+import { ref, computed, h, onMounted, onUnmounted, watch } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
+import { darkTheme, NIcon } from 'naive-ui'
+import { useI18n } from 'vue-i18n'
+import { useAppStore } from '@/stores/app'
+import {
+  AnalyticsOutline, WalletOutline, SettingsOutline, DocumentTextOutline,
+  BarChartOutline, PowerOutline, PlayOutline, StopOutline,
+  ReaderOutline, CalendarNumberOutline, TrendingUpOutline,
+  MoonOutline, SunnyOutline, LanguageOutline,
+} from '@vicons/ionicons5'
+import { useAccountStore } from '@/stores/account'
+import { usePositionStore } from '@/stores/positions'
+import { usePriceStore } from '@/stores/prices'
+import { useLogStore } from '@/stores/logs'
+import { usePatrolStore } from '@/stores/patrol'
+import { wsClient } from '@/api/websocket'
+import { getEngineStatus, startEngine, stopEngine, getVersionInfo, getChangelog, getRemoteChangelog, updateVersion, getUpdateConfig, setUpdateConfig, getUpdateState, rollbackVersion } from '@/api/client'
+import { useMessage, useDialog } from 'naive-ui'
+import PatrolIndicator from '@/components/PatrolIndicator.vue'
+import ChatLauncher from '@/components/chat/ChatLauncher.vue'
+import { schedulePrefetch } from '@/utils/prefetchRoutes'
+const { t, locale } = useI18n()
+const appStore = useAppStore()
+
+// 监听语言变化，刷新菜单 + 同步浏览器标签标题（中文「神机」/ 英文「ShenJi」）
+const menuKey = ref(0)
+watch(() => locale.value, () => {
+  menuKey.value++
+  document.title = t('app.breadcrumb')
+}, { immediate: true })
+// 同步 appStore locale 到 i18n
+watch(() => appStore.locale, (val) => { if (val) locale.value = val }, { immediate: true })
+
+const router = useRouter()
+const route = useRoute()
+const accountStore = useAccountStore()
+const positionStore = usePositionStore()
+const priceStore = usePriceStore()
+const logStore = useLogStore()
+const patrolStore = usePatrolStore()
+
+const engineStatus = ref<'running' | 'stopped'>('stopped')
+const toggleLoading = ref(false)
+const message = useMessage()
+const dialog = useDialog()
+const wsPulse = ref(false)
+let pulseTimer: ReturnType<typeof setTimeout> | null = null
+
+// ── 稳定菜单选项（防止 WS 触发重渲染时 vnode diff 抖动吞点击）──
+// 图标渲染函数提取到模块级，避免每次渲染创建新函数引用
+function makeIconRenderer(icon: any) {
+  return () => h(NIcon, null, { default: () => h(icon) })
+}
+
+const MENU_ICONS = {
+  trading: makeIconRenderer(AnalyticsOutline),
+  positions: makeIconRenderer(WalletOutline),
+  strategies: makeIconRenderer(BarChartOutline),
+  backtest: makeIconRenderer(TrendingUpOutline),
+  trades: makeIconRenderer(ReaderOutline),
+  config: makeIconRenderer(SettingsOutline),
+  report: makeIconRenderer(CalendarNumberOutline),
+  logs: makeIconRenderer(DocumentTextOutline),
+}
+
+// 使用 computed 保持标签响应式但引用稳定；图标函数始终复用同一引用
+const menuOptions = computed(() => [
+  { label: t('nav.trading'), key: '/', icon: MENU_ICONS.trading },
+  { label: t('nav.positions'), key: '/positions', icon: MENU_ICONS.positions },
+  { label: t('nav.strategies'), key: '/strategies', icon: MENU_ICONS.strategies },
+  { label: t('nav.backtest'), key: '/backtest', icon: MENU_ICONS.backtest },
+  { label: t('nav.trades'), key: '/trades', icon: MENU_ICONS.trades },
+  { label: t('nav.config'), key: '/config', icon: MENU_ICONS.config },
+  { label: t('nav.report'), key: '/report', icon: MENU_ICONS.report },
+  { label: t('nav.logs'), key: '/logs', icon: MENU_ICONS.logs },
+])
+
+// 面包屑跟随路由（原硬编码三元链漏了 trades/backtest/report，全部兜底显示"仪表板"）
+const BREADCRUMB_KEYS: Record<string, string> = {
+  dashboard: 'common.dashboard',
+  positions: 'common.positions',
+  strategies: 'common.strategies',
+  backtest: 'nav.backtest',
+  trades: 'nav.trades',
+  config: 'common.config',
+  report: 'nav.report',
+  logs: 'common.logs',
+  patrol: 'common.patrol',
+}
+const breadcrumbLabel = computed(() =>
+  t(BREADCRUMB_KEYS[String(route.name)] || 'common.dashboard'))
+
+// 版本信息
+const versionInfo = ref<{version: string; commit: string; branch: string; dirty: boolean; display: string; has_update: boolean; behind_count: number}>({
+  version: '0.0.0', commit: '?', branch: '?', dirty: false, display: 'v0.0.0', has_update: false, behind_count: 0,
+})
+const showChangelog = ref(false)
+const calendarShowAll = ref(false)
+const calendarData = ref<any>(null)
+async function fetchCalendar() {
+  try {
+    const res = await fetch('/api/news/calendar')
+    if (res.ok) calendarData.value = await res.json()
+  } catch { /* ignore */ }
+}
+const EVT_EN: Record<string, string> = {
+  'Core CPI m/m': 'Core CPI m/m', 'Core CPI y/y': 'Core CPI y/y',
+  'CPI m/m': 'CPI m/m', 'CPI y/y': 'CPI y/y',
+  'Non-Farm Employment Change': 'NFP', 'Unemployment Rate': 'Unemployment',
+  'Average Hourly Earnings m/m': 'Avg Hourly Earnings',
+  'GDP m/m': 'GDP m/m', 'GDP q/q': 'GDP q/q',
+  'Retail Sales m/m': 'Retail Sales', 'Core Retail Sales m/m': 'Core Retail Sales',
+  'PPI m/m': 'PPI m/m', 'PPI y/y': 'PPI y/y',
+  'ISM Manufacturing PMI': 'ISM Manufacturing', 'ISM Services PMI': 'ISM Services',
+  'FOMC Statement': 'FOMC Decision', 'Fed Funds Rate': 'Fed Rate',
+  'Initial Jobless Claims': 'Jobless Claims', 'Continuing Jobless Claims': 'Continuing Claims',
+  'Consumer Sentiment': 'Consumer Sentiment', 'Consumer Confidence': 'Consumer Confidence',
+  'Trade Balance': 'Trade Balance', 'Housing Starts': 'Housing Starts',
+  'Building Permits': 'Building Permits', 'Durable Goods Orders m/m': 'Durable Goods',
+  'Industrial Production m/m': 'Industrial Production', 'Capacity Utilization': 'Capacity Util.',
+  'Treasury Budget': 'Treasury Budget', 'UoM Inflation Expectations': 'UoM Inflation Exp.',
+  'Philly Fed Manufacturing Index': 'Philly Fed Index', 'Empire State Manufacturing Index': 'Empire State Index',
+}
+const EVT_CN: Record<string, string> = {
+  'Core CPI m/m': '核心CPI月率', 'Core CPI y/y': '核心CPI年率',
+  'CPI m/m': 'CPI月率', 'CPI y/y': 'CPI年率',
+  'Non-Farm Employment Change': '非农就业人数', 'Unemployment Rate': '失业率',
+  'Average Hourly Earnings m/m': '平均时薪月率', 'Average Hourly Earnings y/y': '平均时薪年率',
+  'GDP m/m': 'GDP月率', 'GDP q/q': 'GDP季率',
+  'Retail Sales m/m': '零售销售月率', 'Core Retail Sales m/m': '核心零售销售月率',
+  'PPI m/m': 'PPI月率', 'PPI y/y': 'PPI年率',
+  'ISM Manufacturing PMI': 'ISM制造业PMI', 'ISM Services PMI': 'ISM服务业PMI',
+  'FOMC Statement': '美联储利率决议', 'Fed Funds Rate': '美联储利率',
+  'Initial Jobless Claims': '初请失业金', 'Continuing Jobless Claims': '续请失业金',
+  'Consumer Sentiment': '消费者信心指数', 'Consumer Confidence': '消费者信心指数',
+  'Trade Balance': '贸易帐', 'Housing Starts': '新屋开工',
+  'Building Permits': '营建许可', 'Durable Goods Orders m/m': '耐用品订单月率',
+  'Industrial Production m/m': '工业产出月率', 'Capacity Utilization': '产能利用率',
+  'Treasury Budget': '财政部预算', 'UoM Inflation Expectations': '密歇根通胀预期',
+  'Philly Fed Manufacturing Index': '费城联储制造业指数', 'Empire State Manufacturing Index': '纽约联储制造业指数',
+}
+function evtName(title: string) {
+  const currentLocale = locale?.value || 'zh-CN'
+  return currentLocale.startsWith('en') ? (EVT_EN[title] || title) : (EVT_CN[title] || title)
+}
+
+const changelog = ref<Array<{hash: string; date: string; subject: string}>>([])
+const updating = ref(false)
+const updateResult = ref<string>('')
+const updateOk = ref(false)
+
+// 自动更新状态
+const autoUpdateEnabled = ref(false)
+const updateState = ref<{state: string; remote_version: string | null; remote_commit: string | null; remote_ahead: number; message: string | null; error: string | null}>({
+  state: 'idle', remote_version: null, remote_commit: null, remote_ahead: 0, message: null, error: null,
+})
+let updateStateTimer: ReturnType<typeof setInterval> | null = null
+
+async function loadUpdateConfig() {
+  try {
+    const cfg = await getUpdateConfig()
+    autoUpdateEnabled.value = cfg.auto_update_enabled
+  } catch { /* ignore */ }
+}
+async function toggleAutoUpdate(enabled: boolean) {
+  try {
+    await setUpdateConfig({ auto_update_enabled: enabled })
+  } catch { /* ignore */ }
+}
+async function loadUpdateState() {
+  try {
+    const st = await getUpdateState()
+    updateState.value = st
+    return st
+  } catch { return null }
+}
+async function confirmHotUpdate() {
+  if (updateState.value.state !== 'pending') return
+  try {
+    const confirm = await dialog.warning({
+      title: t('version.update_confirm_btn'),
+      content: t('version.update_confirm', { version: updateState.value.remote_version || '?' }),
+      positiveText: t('version.update_confirm_btn'),
+      negativeText: t('version.update_cancel'),
+    })
+  } catch { /* cancelled */ return }
+  try {
+    await updateVersion()
+    // 后端已应用更新并准备重启，前端开始轮询直到后端重新上线
+    message.info(t('version.update_applying'))
+    let retries = 0
+    const poll = async () => {
+      retries++
+      try {
+        await getVersionInfo()
+        location.reload()
+      } catch {
+        if (retries < 30) {
+          await new Promise(r => setTimeout(r, 3000))
+          poll()
+        } else {
+          message.error(t('version.update_fail'))
+        }
+      }
+    }
+    poll()
+  } catch { /* ignore */ }
+}
+
+async function loadChangelog() {
+  try {
+    const r = await getChangelog(20)
+    changelog.value = r.commits || []
+  } catch { /* ignore */ }
+}
+const remoteChangelog = ref<Array<{hash: string; date: string; subject: string}>>([])
+const loadingRemote = ref(false)
+async function loadRemoteChangelog() {
+  loadingRemote.value = true
+  try {
+    const r = await getRemoteChangelog(20)
+    remoteChangelog.value = r.commits || []
+  } catch { /* ignore */ }
+  loadingRemote.value = false
+}
+async function openChangelog() {
+  showChangelog.value = true
+  updateResult.value = ''
+  checkUpdate()
+}
+async function checkUpdate() {
+  updateResult.value = ''
+  try {
+    const v = await getVersionInfo()
+    versionInfo.value = v as any
+    if (v.has_update) {
+      loadRemoteChangelog()
+      updateResult.value = t('app.found_new_commits', { count: v.behind_count })
+      updateOk.value = false
+    } else {
+      loadChangelog()
+      updateResult.value = t('app.up_to_date')
+      updateOk.value = true
+    }
+  } catch { /* ignore */ }
+}
+async function doUpdate() {
+  updating.value = true
+  updateResult.value = ''
+  try {
+    const r = await updateVersion()
+    if (r.success && r.version) {
+      versionInfo.value = r.version as any
+      updateResult.value = t('app.update_success')
+      updateOk.value = true
+      remoteChangelog.value = []
+    } else {
+      updateResult.value = t('app.update_failed', { message: r.message })
+      updateOk.value = false
+    }
+  } catch (e: any) {
+    updateResult.value = t('app.update_failed', { message: e?.message || t('app.update_failed_msg') })
+    updateOk.value = false
+  }
+  updating.value = false
+}
+let updateCheckTimer: ReturnType<typeof setInterval> | null = null
+function triggerPulse() {
+  wsPulse.value = true
+  if (pulseTimer) clearTimeout(pulseTimer)
+  pulseTimer = setTimeout(() => { wsPulse.value = false }, 400)
+}
+const collapsed = ref(false)
+
+// 旧的 renderIcon/menuOptions 已移至上方模块级稳定定义
+
+// 点击防抖（requestAnimationFrame）：让出当前渲染帧，消除 WS 触发 DOM 更新瞬间的点击吞没
+// 比 setTimeout(50) 顺滑（~16ms 一个渲染帧 vs 50ms 固定延迟）
+let menuClickRaf: number | null = null
+function handleMenuUpdate(key: string) {
+  if (menuClickRaf) {
+    cancelAnimationFrame(menuClickRaf)
+  }
+  menuClickRaf = requestAnimationFrame(() => {
+    router.push(key)
+    menuClickRaf = null
+  })
+}
+
+async function checkEngineStatus() {
+  try {
+    const st = await getEngineStatus()
+    engineStatus.value = st.status === 'running' ? 'running' : 'stopped'
+  } catch { /* ignore */ }
+}
+
+async function toggleEngine(checked: boolean) {
+  if (!checked) {
+    dialog.warning({
+      title: t('engine.confirm_stop'),
+      content: t('engine.confirm_stop_msg'),
+      positiveText: t('common.confirm'),
+      negativeText: t('common.cancel'),
+      onPositiveClick: async () => {
+        toggleLoading.value = true
+        try {
+          await stopEngine()
+          engineStatus.value = 'stopped'
+          message.success(t('engine.stop_success'))
+        } catch (e: any) {
+          message.error(e?.response?.data?.detail || t('engine.stop_fail'))
+          engineStatus.value = 'running'
+        }
+        toggleLoading.value = false
+      },
+      onNegativeClick: () => {
+        engineStatus.value = 'running'
+      }
+    })
+  } else {
+    toggleLoading.value = true
+    try {
+      await startEngine()
+      engineStatus.value = 'running'
+      message.success(t('engine.start_success'))
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || t('engine.start_fail'))
+      engineStatus.value = 'stopped'
+    }
+    toggleLoading.value = false
+  }
+}
+
+onMounted(() => {
+  // 空闲期预取所有路由 chunk（最先排程，尽早消除导航切换转圈）
+  schedulePrefetch()
+
+  patrolStore.start(30000)
+
+  // 并行加载独立数据源（原来串行 ~1.2s → 并行 ~max(单个)）
+  Promise.allSettled([
+    checkEngineStatus(),
+    accountStore.fetch(),
+    logStore.fetchHistory(),
+    getVersionInfo().then((v) => { versionInfo.value = v as any }),
+    loadUpdateConfig(),
+    fetchCalendar(),
+  ])
+
+  // 每 5 分钟检查远程更新
+  updateCheckTimer = setInterval(() => {
+    getVersionInfo().then((v) => { versionInfo.value = v as any }).catch(() => {})
+    loadUpdateState()
+  }, 300000)
+  // 冷更新提示：检查 state 是否为 healthy（启动后自动应用）
+  loadUpdateState().then((s) => {
+    if (s?.state === 'healthy' && s?.message) {
+      message.success(s.message)
+    }
+  })
+
+  wsClient.connect()
+  wsClient.on('prices', (msg) => { priceStore.updateTick(msg.data.bid, msg.data.ask); triggerPulse() })
+  wsClient.on('positions', (msg) => { positionStore.updateFromWs(msg.data); triggerPulse() })
+  wsClient.on('account', (msg) => accountStore.updateFromWs(msg.data))
+  wsClient.on('logs', (msg) => logStore.append(msg.data))
+  wsClient.on('status', (msg) => {
+    engineStatus.value = msg.data?.status === 'running' ? 'running' : 'stopped'
+    toggleLoading.value = false
+  })
+})
+
+onUnmounted(() => {
+  wsClient.disconnect()
+  patrolStore.stop()
+  if (updateCheckTimer) clearInterval(updateCheckTimer)
+})
+</script>
+
+<template>
+  <n-layout position="absolute" class="app-shell">
+    <n-layout has-sider position="absolute" class="app-shell">
+      <!-- 侧边栏 -->
+      <n-layout-sider bordered collapse-mode="width" :collapsed-width="64" :width="220"
+        :collapsed="collapsed" @collapse="collapsed = true" @expand="collapsed = false"
+        :native-scrollbar="false" class="app-sider">
+        <div class="sider-header">
+          <n-h2 prefix="bar" class="sider-title">
+            <img v-if="!collapsed" class="sider-logo-img" :src="appStore.isDark ? '/logo-dark.png' : '/logo.png'" width="28" height="28" :alt="t('app.title')" />
+            <span v-if="!collapsed" class="sider-logo-text">{{ t('app.title') }}</span>
+            <img v-else class="sider-logo-img" :src="appStore.isDark ? '/logo-dark.png' : '/logo.png'" width="28" height="28" :alt="t('app.title')" />
+          </n-h2>
+          <n-text v-if="!collapsed" depth="3" class="sider-subtitle">{{ t('app.subtitle') }}</n-text>
+        </div>
+
+        <n-menu :value="route.path" :options="menuOptions" :collapsed="collapsed"
+                :collapsed-width="64" :collapsed-icon-size="22"
+                :key="menuKey"
+                @update:value="handleMenuUpdate" />
+
+        <!-- 侧边栏底部：主题/语言切换 -->
+        <div class="sider-footer">
+          <n-button quaternary size="small" @click="appStore.toggleTheme()" class="sider-toggle-btn">
+            <template #icon>
+              <n-icon><component :is="appStore.isDark ? SunnyOutline : MoonOutline" /></n-icon>
+            </template>
+            <span v-if="!collapsed">{{ appStore.isDark ? t('theme.light') : t('theme.dark') }}</span>
+          </n-button>
+          <n-button quaternary size="small" @click="appStore.setLocale(locale === 'zh-CN' ? 'en-US' : 'zh-CN')" class="sider-toggle-btn">
+            <template #icon>
+              <n-icon><LanguageOutline /></n-icon>
+            </template>
+            <span v-if="!collapsed">{{ locale === 'zh-CN' ? 'EN' : '中文' }}</span>
+          </n-button>
+        </div>
+      </n-layout-sider>
+
+      <!-- 主内容 -->
+      <n-layout>
+        <n-layout-header bordered class="app-header">
+          <n-button quaternary size="small" @click="collapsed = !collapsed">
+            <template #icon>
+              <n-icon><BarChartOutline /></n-icon>
+            </template>
+          </n-button>
+          <n-breadcrumb>
+            <n-breadcrumb-item>{{ t('app.breadcrumb') }}</n-breadcrumb-item>
+            <n-breadcrumb-item>{{ breadcrumbLabel }}</n-breadcrumb-item>
+          </n-breadcrumb>
+                    <div @click="calendarShowAll = true" style="cursor:pointer;overflow:hidden;white-space:nowrap;flex:3;margin:0 12px;font-size:12px;line-height:1.6;padding:2px 8px;border-radius:4px;background:var(--n-color-embedded)">
+            <span class="marquee-inner">
+              <span v-for="evt in calendarData?.upcoming_events?.slice(0, 5)" :key="evt.datetime + evt.title" style="margin-right:60px">
+                <span :style="{ color: evt.impact === 'High' ? '#f6465d' : evt.impact === 'Medium' ? '#f0a020' : '#8b8f97' }">●</span>
+                <span style="font-weight:600">{{ evtName(evt.title) }}</span>
+                <span style="color:#8b8f97"> {{ evt.datetime?.slice(5) }}</span>
+                <span v-if="evt.previous" style="color:#aaa"> {{ $t('signals.prev_prefix') }}{{ evt.previous }}</span>
+                <span v-if="evt.forecast" style="color:#f0b90b"> {{ $t('signals.fcast_prefix') }}{{ evt.forecast }}</span>
+              </span>
+              <span v-if="!calendarData?.upcoming_events?.length" style="color:#8b8f97">{{ $t('signals.calendar_no_events') }}</span>
+            </span>
+          </div>
+<div class="header-spacer"></div>
+          <n-tooltip trigger="hover" placement="bottom">
+            <template #trigger>
+              <div class="version-badge" @click="openChangelog">
+                <span class="version-dot">●</span>
+                <span>v{{ versionInfo.version }}</span>
+                <span v-if="updateState.state === 'pending'" class="version-up-arrow" @click.stop="confirmHotUpdate" title="$t('version.update_downloaded')">⬆</span>
+                <span v-if="versionInfo.behind_count > 0 && updateState.state !== 'pending'" class="version-behind">({{ versionInfo.behind_count }})</span>
+                <span v-else-if="updateState.state === 'pending'" class="version-behind">(●)</span>
+                <span v-else class="version-current">✓</span>
+              </div>
+            </template>
+            <div class="version-tooltip">
+              <div><b>{{ t('version.branch') }}:</b> {{ versionInfo.branch }}</div>
+              <div><b>{{ t('version.commit') }}:</b> {{ versionInfo.commit }}</div>
+              <div v-if="updateState.state === 'pending'" class="version-update-available">⬆ {{ t('version.update_downloaded') }} — v{{ updateState.remote_version || '?' }}</div>
+              <div v-if="versionInfo.has_update" class="version-update-available">⬆ {{ t('version.update_available', {count: versionInfo.behind_count}) }}</div>
+              <div v-else class="version-up-to-date">✓ {{ t('version.latest') }}</div>
+              <div v-if="versionInfo.dirty" class="version-dirty">* {{ t('version.local_dirty') }}</div>
+              <div class="version-click-hint">{{ t('version.click_hint') }}</div>
+            </div>
+          </n-tooltip>
+          <n-tooltip trigger="hover" placement="bottom">
+            <template #trigger>
+              <n-switch v-model:value="autoUpdateEnabled" size="small" :round="true"
+                @update:value="toggleAutoUpdate" />
+            </template>
+            <div>
+              <div style="font-size:12px;font-weight:600">{{ t('version.auto_update') }}</div>
+              <div style="font-size:11px;color:#8b8f97;margin-top:2px">{{ autoUpdateEnabled ? 'ON' : 'OFF' }}</div>
+            </div>
+          </n-tooltip>
+          <PatrolIndicator />
+          <n-switch :value="engineStatus === 'running'" size="large" :round="true"
+            :loading="toggleLoading" @update:value="toggleEngine">
+            <template #checked-icon>
+              <span class="engine-dot" :class="{ 'pulse-flash': wsPulse }"></span>
+            </template>
+          </n-switch>
+        </n-layout-header>
+
+        <n-layout-content class="app-content" :native-scrollbar="false">
+          <router-view />
+        </n-layout-content>
+      
+    <!-- 经济日历完整窗口 -->
+    <n-modal v-model:show="calendarShowAll" :mask-closable="true" preset="card" :title="$t('signals.calendar_full_title')" style="width:75vw;max-height:75vh;overflow-y:auto">
+      <div style="max-height:calc(75vh - 100px);overflow-y:auto">
+        <n-space vertical size="small">
+          <div v-for="evt in calendarData?.upcoming_events" :key="evt.datetime + evt.title"
+            style="padding:8px;border-radius:6px;background:var(--n-color-embedded)">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <n-text style="font-size:13px;font-weight:600">{{ evt.title }}</n-text>
+              <n-tag size="tiny" :color="{ color: evt.impact === 'High' ? '#f6465d' : evt.impact === 'Medium' ? '#f0a020' : '#8b8f97' }" text-color="#fff">{{ evt.impact }}</n-tag>
+            </div>
+            <div style="display:flex;justify-content:space-between;margin-top:4px">
+              <n-text depth="3" style="font-size:12px">{{ evt.country }} {{ evt.datetime }}</n-text>
+              <n-text depth="3" style="font-size:12px">{{ $t('signals.previous') }} {{ evt.previous || '-' }} | {{ $t('signals.forecast') }} {{ evt.forecast || '-' }}</n-text>
+            </div>
+          </div>
+          <div v-if="!calendarData?.upcoming_events?.length" style="text-align:center;padding:30px 0;color:#8b8f97">{{ $t('signals.calendar_no_events') }}</div>
+        </n-space>
+      </div>
+    </n-modal>
+
+</n-layout>
+    </n-layout>
+  </n-layout>
+
+    <!-- 版本变更日志弹窗 -->
+    <n-modal v-model:show="showChangelog" preset="card" class="changelog-modal"
+             :title="versionInfo.has_update ? `v${versionInfo.version} — ${t('version.update_available', {count: versionInfo.behind_count})}` : `${t('version.title')} — v${versionInfo.version} ${t('version.latest')}`">
+      <template #header-extra>
+        <n-tag size="small" :bordered="false" type="success" v-if="!versionInfo.has_update">{{ t('version.up_to_date') }}</n-tag>
+        <n-tag size="small" :bordered="false" type="warning" v-else>{{ t('version.has_update') }}</n-tag>
+      </template>
+
+      <div v-if="versionInfo.has_update">
+        <div v-if="loadingRemote" class="changelog-loading">{{ t('version.loading') }}</div>
+        <div v-else class="changelog-list">
+          <div v-for="(c, i) in remoteChangelog" :key="i" class="changelog-item">
+            <div class="cl-hash">{{ c.hash }}</div>
+            <div class="cl-date">{{ c.date?.slice(0, 16) }}</div>
+            <div class="cl-subject">{{ c.subject }}</div>
+          </div>
+        </div>
+        <div v-if="updateResult" class="update-result" :class="updateOk ? 'update-success' : 'update-fail'">{{ updateResult }}</div>
+      </div>
+
+      <div v-else>
+        <div class="version-info-bar">
+          <span>{{ t('version.current') }}: <b class="version-highlight">v{{ versionInfo.version }}</b></span>
+          <span>{{ t('version.commit') }}: <b class="version-highlight">{{ versionInfo.commit }}</b></span>
+          <span>{{ t('version.branch') }}: <b class="version-highlight">{{ versionInfo.branch }}</b></span>
+        </div>
+        <div v-if="!changelog.length" class="changelog-loading">{{ t('version.loading') }}</div>
+        <div v-else class="changelog-list">
+          <div v-for="(c, i) in changelog" :key="i" class="changelog-item">
+            <div class="cl-hash">{{ c.hash }}</div>
+            <div class="cl-date">{{ c.date?.slice(0, 16) }}</div>
+            <div class="cl-subject">{{ c.subject }}</div>
+          </div>
+        </div>
+      </div>
+
+      <template #footer>
+        <div class="changelog-footer">
+          <span v-if="versionInfo.has_update" class="footer-text">{{ t('version.pending_commits', {count: versionInfo.behind_count}) }}</span>
+          <span v-else class="footer-text">{{ t('version.recent_commits', {count: changelog.length}) }}</span>
+          <div class="footer-actions">
+            <span v-if="versionInfo.dirty && versionInfo.has_update" class="footer-dirty-warning">⚠ {{ t('version.local_dirty') }}</span>
+            <n-button size="small" quaternary :loading="loadingRemote" @click="checkUpdate">↻ {{ t('version.check_update') }}</n-button>
+            <n-button size="small" type="warning" secondary :disabled="!versionInfo.has_update || versionInfo.dirty" :loading="updating" @click="doUpdate">
+              ⬇ {{ t('version.do_update') }}
+            </n-button>
+          </div>
+        </div>
+      </template>
+    </n-modal>
+    <ChatLauncher />
+</template>
+
+<style scoped>
+/* ── 布局 ── */
+.app-shell {
+  height: 100vh;
+  width: 100%;
+  left: 0;
+}
+.app-sider {
+  background: var(--n-color, #1a1d23);
+}
+.app-header {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 12px;
+}
+.app-content {
+  height: calc(100vh - 48px);
+  padding: 20px 24px;
+}
+.header-spacer {
+  flex: 1;
+}
+
+/* ── 侧边栏 ── */
+.sider-header {
+  padding: 20px 16px 12px;
+  text-align: center;
+}
+.sider-title {
+  margin: 0;
+  color: #f0b90b;
+}
+/* n-h2 的 prefix="bar" 会加 padding-left:16px 给装饰竖条让位，
+   而竖条是 ::before 伪元素、不参与 text-align:center，
+   导致可居中区域变成 32~204（中心 118），品牌组整体右偏 8px，
+   与下方副标题（中心 110）错位。补一个等量右内边距让居中区左右对称。 */
+.sider-header .sider-title {
+  padding-right: 16px;
+}
+.sider-logo-img {
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: 6px;
+  flex-shrink: 0;
+  /* logo 源图为 1400x1500（约 0.93:1），必须按比例缩放，
+     否则 width/height 属性写死 28x28 + 默认 object-fit:fill 会横向拉伸变形。
+     aspect-ratio 让图片加载完成前也占用正确比例的盒子，避免布局抖动。 */
+  width: auto;
+  height: 30px;
+  aspect-ratio: 1400 / 1500;
+  object-fit: contain;
+  border-radius: 6px;
+}
+.sider-logo-text {
+  color: #f0b90b;
+  font-size: 22px;
+  font-weight: 700;
+  vertical-align: middle;
+}
+.sider-subtitle {
+  font-size: 11px;
+}
+
+/* ── 侧边栏底部切换按钮 ── */
+.sider-footer {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 8px;
+  display: flex;
+  gap: 4px;
+  justify-content: center;
+  border-top: 1px solid var(--n-border-color, #2d3139);
+}
+.sider-toggle-btn {
+  flex: 1;
+  font-size: 12px !important;
+}
+
+/* ── 版本号徽标 ── */
+.version-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(240, 185, 11, 0.12);
+  color: #f0b90b;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  border: 1px solid rgba(240, 185, 11, 0.3);
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+.version-badge:hover {
+  background: rgba(240, 185, 11, 0.2);
+  border-color: rgba(240, 185, 11, 0.5);
+}
+.version-dot {
+  font-size: 9px;
+}
+.version-dot-update {
+  color: #f6465d;
+  font-size: 9px;
+}
+.version-behind {
+  color: #f0b90b;
+  opacity: 0.7;
+}
+.version-current {
+  color: #22c55e;
+  font-size: 10px;
+}
+.version-up-arrow {
+  color: #f6465d;
+  font-size: 13px;
+  font-weight: bold;
+  cursor: pointer;
+  margin-left: 2px;
+  animation: pulse-glow 1.5s ease-in-out infinite;
+}
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; transform: translateY(0); }
+  50% { opacity: 0.6; transform: translateY(-2px); }
+}
+
+/* ── 版本 tooltip ── */
+.version-tooltip {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.version-update-available {
+  color: #f6465d;
+}
+.version-up-to-date {
+  color: #22c55e;
+}
+.version-dirty {
+  color: #888;
+  margin-top: 2px;
+}
+.version-click-hint {
+  color: #888;
+  margin-top: 4px;
+}
+
+/* ── 引擎状态点 ── */
+.engine-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+}
+.engine-dot.pulse-flash {
+  box-shadow: 0 0 8px 3px rgba(34,197,94,.8);
+}
+
+/* ── 新闻弹窗 ── */
+.nb-overlay {
+  position: fixed; inset: 0; z-index: 9999;
+  background: rgba(0,0,0,0.6);
+  display: flex; align-items: center; justify-content: center;
+}
+.nb-modal {
+  background: var(--bg-tertiary); border-radius: 12px;
+  max-width: 600px; width: 90%; max-height: 80vh;
+  display: flex; flex-direction: column;
+  box-shadow: 0 8px 32px var(--shadow-heavy);
+}
+.nb-modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px; border-bottom: 1px solid var(--border-color);
+}
+.nb-modal-title {
+  font-weight: 700;
+  font-size: 16px;
+}
+.nb-close {
+  background: none; border: none; color: var(--text-secondary); font-size: 24px;
+  cursor: pointer; padding: 0 4px; line-height: 1;
+  transition: color 0.15s ease;
+}
+.nb-close:hover { color: var(--text-primary); }
+.nb-modal-body {
+  padding: 20px; overflow-y: auto;
+}
+
+/* ── Changelog 弹窗 ── */
+.changelog-modal {
+  width: 640px;
+  max-width: 90vw;
+}
+.changelog-loading {
+  text-align: center;
+  color: #888;
+  padding: 20px;
+}
+.changelog-list {
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.changelog-item {
+  display: flex;
+  gap: 12px;
+  padding: 8px 4px;
+  border-bottom: 1px solid #1f1f1f;
+}
+.cl-hash {
+  font-family: var(--font-mono);
+  color: #f0b90b;
+  font-size: 11px;
+  min-width: 64px;
+}
+.cl-date {
+  color: #666;
+  font-size: 11px;
+  min-width: 130px;
+  font-family: var(--font-mono);
+}
+.cl-subject {
+  flex: 1;
+  font-size: 13px;
+  color: #ddd;
+  line-height: 1.5;
+}
+.update-result {
+  margin-top: 12px;
+  font-size: 12px;
+}
+.update-success {
+  color: #22c55e;
+}
+.update-fail {
+  color: #f6465d;
+}
+.version-info-bar {
+  margin-bottom: 12px;
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: #888;
+}
+.version-highlight {
+  color: #ddd;
+}
+.changelog-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  color: #888;
+}
+.footer-text {
+  color: #888;
+}
+.footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.footer-dirty-warning {
+  color: #f0b90b;
+}
+
+.marquee-inner {
+  display: inline-block;
+  animation: marquee 57s linear infinite;
+  padding-left: 100%;
+}
+@keyframes marquee {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-100%); }
+}
+</style>

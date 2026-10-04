@@ -1,0 +1,121 @@
+/* ─────────────────────────────────────────────────────────────
+   统一卡片网格（MCP 服务 / 技能 / LLM 服务商 / 商店平台 共用）
+
+   设计契约（新增卡片模块请直接复用，勿再手写 inline grid）：
+   1. 等宽：grid-template-columns repeat(auto-fill, minmax(240px,1fr))
+   2. 等高：grid-auto-rows 固定为 var(--tile-h)，所有卡片高度一致
+   3. 绝不溢出遮挡：.tile 设 height:100% + overflow:hidden，
+      内容超出改由 .tile-bd 内部纵向滚动（overscroll-behavior:contain）
+   4. 文本不撑破列宽：所有 .tile 后代强制 min-width:0，
+      长单词（如 alphavantage）用 .u-break 断行、.u-ellipsis 省略
+   ───────────────────────────────────────────────────────────── */
+
+.tile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-auto-rows: var(--tile-h, 200px);
+  gap: 14px;
+  padding: 4px;
+}
+
+/* grid item 必须能收缩，否则长内容会把列撑破 */
+.tile-grid > * {
+  min-width: 0;
+}
+
+/* ── 卡片本体 ── */
+.tile {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--n-border-color, rgba(128, 128, 128, 0.25));
+  border-radius: 10px;
+  background: transparent;
+  overflow: hidden;            /* 关键：内容再多也不外溢遮挡邻卡 */
+  transition: border-color 0.2s, box-shadow 0.2s, opacity 0.2s;
+}
+.tile * {
+  min-width: 0;                /* 防长单词撑破卡片宽度 */
+}
+.tile-click {
+  cursor: pointer;
+}
+.tile-click:hover {
+  border-color: rgba(240, 185, 11, 0.45);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+/* 启用态：仅改边框色，不改边框宽度（避免 1px 位移导致视觉错位） */
+.tile-on {
+  border-color: #f0b90b;
+}
+.tile-off {
+  opacity: 0.55;
+}
+/* 虚线型（新增 / 从市场添加） */
+.tile-dash {
+  border: 2px dashed var(--n-border-color, rgba(128, 128, 128, 0.3));
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+.tile-dash:hover {
+  border-color: #f0b90b;
+}
+
+/* ── 卡片内三段结构 ── */
+.tile-hd {                      /* 头部：固定不滚动 */
+  flex-shrink: 0;
+}
+.tile-bd {                      /* 主体：唯一滚动区 */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.tile-ft {                      /* 底部：固定不滚动 */
+  flex-shrink: 0;
+  margin-top: auto;
+}
+
+/* ── 细滚动条（暗/亮主题通用）── */
+.tile-bd::-webkit-scrollbar { width: 6px; }
+.tile-bd::-webkit-scrollbar-track { background: transparent; }
+.tile-bd::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.35);
+  border-radius: 3px;
+}
+.tile-bd::-webkit-scrollbar-thumb:hover { background: rgba(128, 128, 128, 0.55); }
+.tile-bd { scrollbar-width: thin; scrollbar-color: rgba(128,128,128,0.35) transparent; }
+
+/* ── 文本工具 ── */
+.u-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.u-break {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.u-clamp2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.u-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.u-tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}

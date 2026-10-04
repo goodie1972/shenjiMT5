@@ -1,0 +1,97 @@
+import { defineStore } from 'pinia'
+import { ref } from 'vue'
+import { getConfig, updateConfig, resetConfig, getStrategyPool, updateStrategyPool as updatePoolApi, updateCoordinator as updateCoordApi, getPaperConfig, updatePaperConfig as updatePaperApi, resetPaperData as resetPaperApi } from '@/api/client'
+
+export const useConfigStore = defineStore('config', () => {
+  const items = ref<Record<string, any>>({})
+  const loading = ref(false)
+  const error = ref<string | null>(null)
+
+  /** 拉取配置。返回是否成功（审计 M-9：调用方须据此决定是否进行数据合并，
+   *  否则配置为空时会全落默认值并被"内存现值优先"的轮询永久锁死） */
+  async function fetch(): Promise<boolean> {
+    loading.value = true
+    error.value = null
+    try {
+      items.value = await getConfig()
+      return true
+    } catch (e: any) {
+      error.value = e?.message || '获取配置失败'
+      return false
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function fetchConfig() { await fetch() }
+
+  async function update(updates: Record<string, any>) {
+    error.value = null
+    try {
+      await updateConfig(updates)
+      await fetch()
+    } catch (e: any) {
+      error.value = e?.message || '更新配置失败'
+    }
+  }
+
+  async function updateStrategyPool(pool: Record<string, any>) {
+    error.value = null
+    try {
+      await updatePoolApi(pool)
+      await fetch()
+    } catch (e: any) {
+      error.value = e?.message || '更新策略池失败'
+      throw e
+    }
+  }
+
+  async function fetchStrategyPool() {
+    try {
+      return await getStrategyPool()
+    } catch (e: any) {
+      error.value = e?.message || '获取策略池失败'
+      return null
+    }
+  }
+
+  async function updateCoordinator(cfg: Record<string, any>) {
+    error.value = null
+    try {
+      await updateCoordApi(cfg)
+      await fetch()
+    } catch (e: any) {
+      error.value = e?.message || '更新协调器失败'
+      throw e
+    }
+  }
+
+  async function updatePaperConfig(cfg: Record<string, any>) {
+    error.value = null
+    try {
+      const res = await updatePaperApi(cfg)
+      await fetch()
+      return res
+    } catch (e: any) {
+      error.value = e?.message || '更新纸面交易配置失败'
+      throw e
+    }
+  }
+
+  async function resetPaperData() {
+    error.value = null
+    try {
+      await resetPaperApi()
+    } catch (e: any) {
+      error.value = e?.message || '重置纸面交易数据失败'
+      throw e
+    }
+  }
+
+  async function reset(key?: string) {
+    await resetConfig(key)
+    await fetch()
+  }
+
+  return { items, loading, error, fetch, fetchConfig, update, updateStrategyPool, fetchStrategyPool, updateCoordinator, updatePaperConfig, resetPaperData, reset }
+})
