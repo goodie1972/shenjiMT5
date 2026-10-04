@@ -17,9 +17,10 @@
 | 前端 | **HTMX + 服务端模板（Jinja2）**，无 npm、无构建链 | 监控面板 = 读多写少 + 局部自动刷新（hx-trigger="every 5s"），HTMX 正好为此而生；一个 Python 进程搞定 |
 | 移动端 | **PWA**（manifest + 响应式 + 手机浏览器加桌面图标） | 同一套代码零额外成本；无需推送（告警已取消）；未来要"真 App"用 TWA 套壳，一行配置 |
 | 认证 | 单 token（环境变量配置）+ 仅监听 LAN/127.0.0.1 | 交易系统 API 不裸奔公网；远程访问用 VPN/内网穿透时再加 |
-| 部署 | `python tools/run_dashboard.py` 一个进程，端口 8800 | 与引擎解耦（只读 DB），引擎重启不影响面板 |
+| 部署 | 桌面版 `python tools/run_app.py`（pywebview 原生窗口，双击即启）｜ 浏览器版 `tools/run_dashboard.py`（8800） | 用户裁定：完整版 = 直接启动的程序，非浏览器窗口；pywebview + FastAPI 单进程 + PyInstaller 打包（v3.2 已交付 run_app.py）；引擎仍为独立进程 |
+| 桌面打包 | PyInstaller → 神机MT5.exe（后续）；Tauri 为发行级备选（需 Rust 工具链） | exe ~100-200MB 可接受（单机自用） |
 
-**明确不做**：React/Vue 构建链、WebSocket 实时推送（轮询够用）、原生 App（PWA 够用再说）、任何写操作。
+**明确不做**：React/Vue 新建构建链（旧前端 fork 除外）、WebSocket 实时推送（轮询够用）、Electron、任何写操作。
 
 ## 2. 页面清单（三页够用）
 
