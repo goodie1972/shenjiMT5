@@ -1,78 +1,49 @@
-/* E 微调层 override.js — 原版 100% 保留；只做"加"：侧栏两项 + 占位面板。
-   真实实现（D6/D7）= fork 旧前端源码后在 src/router+AppShell 中正式加入；
-   本文件仅为原版+微调的静态演示。 */
+/* E 微调层 override.js v2（按用户裁定修订）：
+   ① 撤销 v1 的两个新增导航项——影子对照并入「日报周报」页、AI 参谋 =
+      升级现有 AI agent（不新增页面；FortuneCat/AiChatPanel 入口保留）
+   ② 演示：在「日报周报」页注入「影子对照」周报卡片（正式实现 = ReportView
+      加 Tab，数据源 tools/weekly_shadow_report.py 产物）
+   ③ 零字体/底色/布局变更 */
 
 (function () {
   "use strict";
 
-  var ITEMS = [
-    { id: "e-nav-ai", label: "AI 参谋", icon: "✦", badge: "新增", panel: panelAI },
-    { id: "e-nav-shadow", label: "影子对照", icon: "⇋", badge: "新增", panel: panelShadow },
-  ];
+  var SHADOW_HTML =
+    '<div id="e-shadow-card" style="background:#fff;border:1px solid #e3e6eb;' +
+    'border-radius:10px;padding:16px 20px;box-shadow:0 2px 10px rgba(0,0,0,.08);margin:14px 0">' +
+    '<h3 style="margin:0 0 4px;font-size:15px">影子对照（MT5 demo vs MT4 实盘）' +
+    '<span style="color:#f0b90b;font-size:11px;margin-left:8px">新增 Tab 演示</span></h3>' +
+    '<p style="font-size:12px;color:#8b8f97;margin:4px 0 10px">周度对照：方向一致率 ≥90%' +
+    '（±2 bar）｜ 数据源 tools/weekly_shadow_report.py ｜ 判据 T2.6 修订（2026-10-03 确认）</p>' +
+    '<table style="border-collapse:collapse;font-size:13px">' +
+    '<tr style="color:#8b8f97"><th align="left">策略</th><th>MT5 笔数</th><th>MT4 笔数</th>' +
+    '<th>一致率</th><th>MT5 盈亏</th><th>MT4 盈亏</th></tr>' +
+    '<tr><td>m30_followave</td><td align="center">12</td><td align="center">15</td>' +
+    '<td align="center">93%</td><td align="center" style="color:#0ecb81">+86.4</td>' +
+    '<td align="center" style="color:#f6465d">-31.2</td></tr>' +
+    '<tr><td>m15_followave</td><td align="center">31</td><td align="center">27</td>' +
+    '<td align="center">91%</td><td align="center" style="color:#0ecb81">+124.7</td>' +
+    '<td align="center" style="color:#f6465d">-104.1</td></tr></table>' +
+    '<p style="font-size:11px;color:#8b8f97;margin:8px 0 0">（示例数据 · 正式版每周自动' +
+    '生成 shadow_weekly 报告并在此渲染）</p></div>';
 
-  function ensureNav() {
-    // Naive UI 菜单容器
-    var menu = document.querySelector(".n-menu");
-    if (!menu) return false;
-    if (document.getElementById("e-nav-ai")) return true;
-    var ul = menu.querySelector("ul") || menu;
-    ITEMS.forEach(function (it) {
-      var li = document.createElement("div");
-      li.className = "n-menu-item";
-      li.id = it.id;
-      li.style.cursor = "pointer";
-      li.innerHTML =
-        '<div class="n-menu-item-content" style="padding-left:18px">' +
-        '<span style="margin-right:8px">' + it.icon + '</span>' +
-        '<span style="font-size:13px">' + it.label + '</span>' +
-        '<span class="e-new" style="margin-left:auto">' + it.badge + '</span></div>';
-      li.addEventListener("click", function () { openPanel(it); });
-      ul.appendChild(li);
-    });
-    return true;
+  function inject() {
+    if (!/\/report/i.test(location.pathname + location.hash)) return;
+    if (document.getElementById("e-shadow-card")) return;
+    var host = document.querySelector(".n-layout-scroll-container") || document.body;
+    if (!host) return;
+    host.insertAdjacentHTML("beforeend", SHADOW_HTML);
+    // 固定定位：浮于内容区顶部（避开 200px 侧栏），与页面滚动联动性简化
+    var card = document.getElementById("e-shadow-card");
+    card.style.position = "fixed";
+    card.style.top = "58px";
+    card.style.left = "218px";
+    card.style.right = "18px";
+    card.style.zIndex = "500";
   }
 
-  function openPanel(it) {
-    var old = document.getElementById("e-panel");
-    if (old) old.remove();
-    var div = document.createElement("div");
-    div.id = "e-panel";
-    div.innerHTML =
-      '<span class="close" id="e-close">×</span>' +
-      '<h2>' + it.label + ' <span class="tag">D6/D7 规划页 · 静态演示</span></h2>' +
-      it.panel();
-    document.body.appendChild(div);
-    document.getElementById("e-close").addEventListener("click", function () {
-      div.remove();
-    });
-  }
-
-  function panelAI() {
-    return (
-      '<p>AI 参谋 = 自建 agent 底座（工具调用 + 会话 + persona/记忆/技能）上的对话页。</p>' +
-      '<div class="kv">' +
-      '<div class="kvd"><b>内置工具 8 个</b>get_positions / get_indicators / get_candles / get_account_info / get_trades_history / get_market_price / get_gate_stats / get_shadow_summary</div>' +
-      '<div class="kvd"><b>PA 分析工具</b>get_pa_analysis(tf) → pa_agent sidecar 两阶段分析（AGPL 隔离），决策 JSON 落 ai_analysis 表</div>' +
-      '<div class="kvd"><b>交互</b>SSE 流式对话 + 工具调用过程展示 + 追问锚定分析记录</div>' +
-      '<div class="kvd"><b>纪律</b>AI 永远不下单——工具纪律代码级注入</div>' +
-      '</div><p>左侧栏新增入口；本页为静态占位，正式实现见 UI_APP_PLAN D6。</p>'
-    );
-  }
-
-  function panelShadow() {
-    return (
-      '<p>影子对照 = MT5 demo 引擎 vs MT4 实盘的同窗对照（晋升核验证据）。</p>' +
-      '<div class="kv">' +
-      '<div class="kvd"><b>对照口径</b>方向一致率 ≥90%（±2 bar），每周生成 shadow_weekly 报告</div>' +
-      '<div class="kvd"><b>图表</b>MT5 vs MT4 每日盈亏分组柱图（已在 v2 面板预览）</div>' +
-      '<div class="kvd"><b>跟踪档</b>docs/promotions/m{30,15}_followave_promotion.md</div>' +
-      '<div class="kvd"><b>判据来源</b>T2.6 修订（2026-10-03 确认）</div>' +
-      '</div><p>本页为静态占位；v2 面板已有 /shadow 页可先行预览。</p>'
-    );
-  }
-
-  // 等 Vue 挂载后注入（轮询至菜单出现）
-  var timer = setInterval(function () {
-    if (ensureNav()) clearInterval(timer);
-  }, 400);
+  // 路由变化（history 模式）+ 挂载轮询；60s 后停止（演示用途）
+  window.addEventListener("popstate", inject);
+  var timer = setInterval(inject, 1200);
+  setTimeout(function () { clearInterval(timer); }, 60000);
 })();

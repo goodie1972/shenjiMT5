@@ -206,4 +206,5 @@ Vue/构建链、Tauri/PyInstaller 打包、自动更新器、策略上传端点�
 | v1.0 | 2026-10-02 | 初版：PWA 优先路线 |
 | v2.0 | 2026-10-03 | U1~U3 交付（FastAPI+HTMX+ECharts 三页面），Playwright 29 断言 |
 | v3.0 | 2026-10-03 | 用户裁定 v2 太简单；经旧库 dashboard 与 PA_Agent 深度探索，规划三大中心移植（D1~D3）+ PA_Agent sidecar 集成（D4，AGPL 合规路线）+ 日报/新闻/App 增强（D5~D6） |
+| v3.2 | 2026-10-04 | 用户二次裁定：影子对照不为独立导航项——并入「日报周报」页作为 Tab（E 微调层已演示注入卡片）；AI 参谋不新增页面——**升级现有 AI agent**（routes/ai.py + services/agent/*）的工具集（get_pa_analysis/get_gate_stats/get_shadow_summary/get_candles）+ PA 技能包 + soul.md 更新为 MT5 语义，FortuneCat/AiChatPanel 入口保留。D6 内容相应并入 D5；E 微调层 override.js v2 已验证（日报周报页注入 ✓） |
 | v3.1 | 2026-10-04 | 用户指正方向：旧库 agent 子系统是 AI 底座（工具调用架构）而非被取代物——v3.1 重写 §7.2（自建 agent 框架 clean-room 蓝本：逐构件规模/取舍/旧库 bug 清单，PA 降为底座上的工具+技能）；新增 §7.5 纸面交易移植（PaperBridge 语义精确盘点 + 10 项缺陷修正清单 + 13 条移植清单）；分期改 D1~D7（纸面模式提前至 D4） |
