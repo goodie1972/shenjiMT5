@@ -119,44 +119,85 @@ GET /api/shadow/weekly → 读最新 shadow_weekly_*.md
 
 ### 三大中心之外值得抄
 
-健康巡检（GREEN/YELLOW/RED + 每策略封锁详情与剩余冷却）→ P1 升级；日报/周报生成（10min/午夜）→ 新页面；新闻日历（ForexFactory）→ G1 接线时一起做。AI 对话子系统（895 行 ai.py：SSE 聊天+工具+MCP+persona）→ 被 PA_Agent sidecar 方案取代。
+健康巡检（GREEN/YELLOW/RED + 每策略封锁详情与剩余冷却）→ P1 升级；日报/周报生成（10min/午夜）→ 新页面；新闻日历（ForexFactory）→ G1 接线时一起做。
 
-## 7.2 PA_Agent 集成（AGPL 合规路线）
+**AI 对话子系统与纸面交易**（v3.1 修订）：这两个不是"被取代物"，而是**自建 AI 底座与纸面模式的架构蓝本**——见 §7.2/§7.5（经 2026-10-04 深度研究修订）。
 
-**它是什么**：PyQt6 桌面应用，AI 辅助 Price Action K线分析。两阶段管线（市场诊断 JSON → 交易决策 JSON：订单建议/入场/SL/TP/置信度/下一根 bar 预测），13 家 LLM 路由（DeepSeek/GLM/Kimi/Qwen/Ollama…），结构化输出校验+重试，经验库（按行情状态检索历史成败案例注入提示词），飞书/PushPlus 通知。**刻意不做工具调用、不碰下单**——"程序算事实 → 提示词 → 校验过的 JSON 回来"，110 个测试文件，工程纪律好，活跃维护。
+## 7.2 AI 底座（自建 agent 框架，clean-room 旧库设计）+ PA_Agent 作为技能
 
-**关键约束：AGPL-3.0**。核心 Qt-free 可库化（`AppContext` + `TwoStageOrchestrator.submit()` 返回 AnalysisRecord + `FreeChatSession` 多轮追问），但网络交互触发源码义务。**合规路线 = 进程隔离 sidecar**：
+### 7.2.1 架构关系（v3.1 修正，用户指正）
+
+> **旧库 agent 子系统 = AI 底座**（工具调用架构，能真正查引擎数据、能对话）；
+> **PA_Agent = 底座上的一个分析技能**（它刻意禁用工具调用，`tool_choice:"none"`，
+> 设计就是"喂数据→回 JSON"——两阶段分析做成底座上的注册工具 + SKILL.md 提示包，
+> 而不是绕过底座的独立页面）。
+
+旧库子系统架构（895 行 ai.py + services/agent/*）已逐行盘点，核心构件与规模：
+
+| 构件 | 旧库实现 | 规模 | 取舍 |
+|------|----------|------|------|
+| 聊天循环 | SSE 三事件协议（content/tool/done）；工具轮非流式+最终答案 20 字符分块；**最多 5 轮**；`role:tool` 按 tool_call_id 配对；首字节失败整体降级纯流式；400 工具不支持→黑名单 600s 重试一次 | ai.py:593-822 | **照搬不变量**，黑名单机制简化为"重试一次" |
+| 工具注册表 | register/call/to_openai_tools（OpenAI JSON-Schema），内置 5 只读工具（positions/indicators/account/trades_history/market_price），包导入时注册，新工具零路由改动 | ~100 行 | **clean-room 重写** + MT5 版工具集 |
+| 执行门面 | McpRuntime.execute 模式：名字分发/`to_thread`/超时 30s/异常→字符串/非 str→JSON | ~266 行 | **折叠成 ~40 行**（无 MCP） |
+| 会话 | 两张 SQLite 表（chat_sessions/chat_messages）+ ~90 行 CRUD；工具对话只在内存（不落库——v3.1 改进：落库 `context_snapshot` 列） | ai_service.py:57-152 | 照搬 + 工具对话落库 |
+| Provider 层 | OpenAI 兼容单路径 + ollama 分支；多 provider CRUD/故障转移/SSRF 门/密钥混淆备份 | llm_provider.py 793 行 | **最小 ~80 行**（活跃 provider + chat/completions），硬化项按需后补 |
+| System prompt 组装 | persona（soul.md 双文件）+ 代码级工具纪律块 + 【长期记忆】+ 上下文分节 + 技能摘要 | persona_manager:296-335 | **照搬组装结构** |
+| 上下文构建器 | 引擎/持仓/价格/指标/信号/成交/新闻分节 map | context_builder.py | 重写——**旧库 bug 警示**：`_get_engine()` 调用不存在的 `get_instance()` 导致引擎分节全静默死亡，只有 SQLite 分节活着；新库用显式 DI |
+| MCP 栈 | 手写 JSON-RPC 客户端 682 行 + runtime/config/marketplace | ~1600 行 | **整体丢弃**（需要时再按旧库设计加回） |
+| Skills | SKILL.md = 纯提示包（frontmatter+方法论正文）；聊天只注入摘要不注正文（旧库缺陷） | skill_loader | 照搬概念，**修正：启用技能注入全文** |
+| Memory | 每轮后台 LLM 抽取偏好 → 全局滚动 memory.md（≤2000 字符）→ 注入【长期记忆】 | 139 行 | 照搬（自包含、便宜） |
+
+**内置工具集（MT5 版）**：旧库 5 个 + 新增——`get_candles(tf,limit)`、`get_pa_analysis(timeframe)`（→PA sidecar，见 7.2.2）、`get_gate_stats()`、`get_shadow_summary()`。全部只读；**AI 永远不下单**（工具纪律块代码级注入，用户改 soul.md 也删不掉——旧库 v3 设计，照搬）。
+
+**旧库两个反面教材（新库直接修正）**：① 工具经 `sys.modules["dashboard.backend.main"].engine_runner` 摸全局单例（v2 修复过一次，context_builder 又犯）→ 新库**显式依赖注入**；② symbol 硬编码散布 → 统一 settings。
+
+### 7.2.2 PA_Agent 在底座中的位置（AGPL 合规路线不变）
 
 ```
-引擎(K线/journal) ──KlineFrame──▶ pa_agent sidecar（独立 venv/独立进程，
-                                     │   自写薄 FastAPI 壳，import 未修改的 pa_agent）
-面板「AI 参谋」页 ◀──AnalysisRecord──┘（诊断 + 决策建议 + 置信度 + 决策树）
-        人看建议 → 人决定（AI 永远不下单）
+面板「AI 参谋」页（SSE 聊天）
+   │ 用户提问 → agent 循环（自建底座）
+   │   ├─ 工具：get_positions / get_indicators / get_trades_history / ...
+   │   └─ 工具：get_pa_analysis(tf) ──HTTP──▶ pa_agent sidecar（独立 venv/进程，AGPL 隔离）
+   │                                             │ TwoStageOrchestrator 两阶段分析
+   ◀── 流式回答（含 PA 决策 JSON 引用）◀─────────┘ 决策树/置信度
 ```
 
-- 不修改 pa_agent 源码 = 无聚合修改义务；sidecar 代码独立成目录；依赖拖累（PyQt6/akshare 等）隔离在 sidecar venv
-- 决策 JSON 落新表 `ai_analysis`：与实际走势对比 = 长期评估 AI 参谋质量
-- 追问：FreeChatSession 锚定某次分析多轮对话
-- 明确预期：它不给工具调用/MCP（源码主动禁用）——"让 AI 操作引擎"不在其设计内，也不在我们规划内
+- sidecar 独立 venv/进程、不修改 pa_agent 源码（AGPL 合规）；决策 JSON 落 `ai_analysis` 表，与实际走势长期对比
+- PA 方法论另做成 `skills/pa_analysis/SKILL.md` 提示包（**修正旧库缺陷：启用技能注入全文**）
+- 分析计算（结构/BOS/供需区）做成可测试的纯 Python（无 LLM），由工具返回紧凑 JSON——LLM 只做解读
 
-## 7.3 分期（D1~D6）
+## 7.5 纸面交易移植（paper_sim，v3.1 新增）
+
+旧库 PaperBridge（802 行，v4）= **装饰器桥**：数据走真 feed、交易本地模拟，策略零感知。深挖出精确语义 + 10 项已知缺陷，移植清单：
+
+**照搬的概念**：BUY@ask/SELL@bid 开、对侧平；PnL = `diff × volume × 100`（合约 100oz/lot，可从 MT5 `SYMBOL_TRADE_CONTRACT_SIZE` 运行时取，修旧库硬编码）；SL/TP tick 轮询判定（BUY 看 bid、SELL 看 ask、touch 即触发、SL 先于 TP、重入保护）；部分平仓=结算比例+保留 ticket+`partial_closed` 标志；trade 行 `mode='paper'` 列（与 demo 同 schema 可比）；双层仓位上限；纸面专属同向浮亏门禁；exit_reason 词表。
+
+**修正的旧债**（旧库 10 项缺陷逐条）：① 手续费 per-lot 可配（旧库每次平仓平收 $0.5、部分平仓账目矛盾）；② partial reason 从调用方透传（旧库硬编码 partial_tp，亏损部分也这么标）；③ 持久化用**单行交易记录**（旧库两行 CSV 三种解析器三种规则——实测踩坑证明脆弱），SQLite `paper_trades` 表；④ SL/TP 判定挂到独立 tick 源并记录**缺口跳空**（旧库休市间隙盲区，纸面结果虚高）；⑤ `ignore_gates` 拆成显式 flags（旧库 `ignore_gates=true` 会泄漏到 live 模式跳过风控块——实锤缺陷）；⑥ 重置语义修正（旧库说"余额归零"实际恢复初始值）。
+
+**本地纸面 vs demo 账户的互补定位**（两者并存）：纸面 = 确定性成交、独立核算（initial_balance+reset）、策略池 mode 隔离、门禁矩阵可选（策略逻辑自由测试）；demo = 真实点差/滑点/执行校准。同一 trade schema，结果可比。
+
+**MT5 特有红利**：保证金从 symbol spec 运行时取（旧库无保证金模拟）；`OnTrade`-式对账可用 `history_deals` 复核。
+
+## 7.3 分期（v3.1，D1~D7）
 
 | 期 | 内容 | 工作量 | 依赖 |
 |----|------|--------|------|
 | D1 交易中心 | 持仓管理（平仓/改SLTP，确认+重试）、引擎启停按钮、健康巡检条（YELLOW/RED + 每策略封锁详情） | ~1.5 天 | 无 |
 | D2 策略中心 | 策略池展示（发现/状态/changelog）+ 每策略 stats 卡（胜率/PF/连亏/盈亏曲线）+ 池编辑（改后重启生效）；热加载后置 | ~1.5 天 | 无 |
 | D3 回测中心 | 回测公共框架抽取（数据/口径/ex-riding/报告层）+ 作业 API（submit/status/results/history，**子进程执行**）+ 回测页（四口径 + 成本敏感性 + 权益/明细） | ~2.5 天 | 无 |
-| D4 AI 参谋 | pa_agent sidecar（独立 venv）+ 面板 AI 页 + `ai_analysis` 表 | ~2 天（sidecar 调试是主要变数） | LLM API key |
-| D5 日报/周报页 + 新闻日历 | journal 聚合日报；ForexFactory 抓取 + G1 接线 | ~1.5 天 | D1 |
-| D6 App 增强 | PWA 图标/安装提示 → TWA 套壳 APK（视需求） | ~1 天 | D1~D3 |
+| D4 纸面模式 | `engine/paper_sim.py` 装饰器桥（照搬语义+修正 10 债）+ mode 配置（demo/paper 双模式，显式门禁 flags）+ 面板模式切换 + `paper_trades` 表 | ~2 天 | 无 |
+| D5 AI 底座 | 自建 agent 框架（聊天循环 SSE/工具注册表/执行门面/会话表/provider 最小层/prompt 组装/persona+memory+skills）+ 内置工具 5+3 + 「AI 参谋」聊天页 | ~2.5 天 | D4（工具查纸面/引擎数据） |
+| D6 PA 技能 | pa_agent sidecar（独立 venv，AGPL 隔离）+ `get_pa_analysis` 工具 + `skills/pa_analysis/SKILL.md` + `ai_analysis` 表 | ~2 天（sidecar 调试是主要变数） | D5 + LLM API key |
+| D7 日报/周报页 + 新闻日历 | journal 聚合日报；ForexFactory 抓取 + G1 接线 | ~1.5 天 | D1 |
+| D8 App 增强 | PWA 图标/安装提示 → TWA 套壳 APK（视需求） | ~1 天 | D1~D3 |
 
-**节奏**：D1、D2 先行（纯面板层）；D3 与影子运行并行；D4 等 LLM key 就位。全部完成后旧库 dashboard 即被完整替代。
+**节奏**：D1~D3 纯面板/工具层先行；D4 纸面模式独立（影子运行不冲突）；D5 底座在 D4 之后（工具能同时查 demo 与纸面数据）；D6 挂 PA。全部完成后旧库 dashboard + AI 子系统被完整替代。
 
 **手动开单的特殊纪律**（若启用）：面板开单 = 绕过策略门禁的"人的决定"，需显式开关 + 二次确认 + journal 标注 `manual`；默认关闭。
 
-## 7.4 明确不做（v3 重申）
+## 7.4 明确不做（v3.1 重申）
 
-Vue/构建链、Tauri/PyInstaller 打包、自动更新器、策略上传端点、994 行翻译字典、客户端 TA 重实现、引擎嵌面板进程、AI 下单。
+Vue/构建链、Tauri/PyInstaller 打包、自动更新器、策略上传端点、994 行翻译字典、客户端 TA 重实现、引擎嵌面板进程、AI 下单、MCP 栈（首版；需要外部连接器时按旧库 682 行设计加回）。
 
 ## 变更记录
 
@@ -165,3 +206,4 @@ Vue/构建链、Tauri/PyInstaller 打包、自动更新器、策略上传端点�
 | v1.0 | 2026-10-02 | 初版：PWA 优先路线 |
 | v2.0 | 2026-10-03 | U1~U3 交付（FastAPI+HTMX+ECharts 三页面），Playwright 29 断言 |
 | v3.0 | 2026-10-03 | 用户裁定 v2 太简单；经旧库 dashboard 与 PA_Agent 深度探索，规划三大中心移植（D1~D3）+ PA_Agent sidecar 集成（D4，AGPL 合规路线）+ 日报/新闻/App 增强（D5~D6） |
+| v3.1 | 2026-10-04 | 用户指正方向：旧库 agent 子系统是 AI 底座（工具调用架构）而非被取代物——v3.1 重写 §7.2（自建 agent 框架 clean-room 蓝本：逐构件规模/取舍/旧库 bug 清单，PA 降为底座上的工具+技能）；新增 §7.5 纸面交易移植（PaperBridge 语义精确盘点 + 10 项缺陷修正清单 + 13 条移植清单）；分期改 D1~D7（纸面模式提前至 D4） |
