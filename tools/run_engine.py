@@ -64,13 +64,22 @@ def main() -> int:
     setup_logging()
 
     pool: dict[str, dict] = {}
-    if args.smoke:
-        pool["smoke"] = {"magic": 661901, "timeframe": "M5"}
-    if args.followave:
-        pool["m15_followave"] = {"magic": 661401, "timeframe": "M15"}
-        pool["m30_followave"] = {"magic": 661402, "timeframe": "M30"}
+    # 池真源 = data/runtime_config.json 的 strategy_pool（策略中心单源原则）
+    import json as _json
+    rc_path = os.path.join(settings.DATA_DIR, "runtime_config.json")
+    try:
+        pool = _json.load(open(rc_path, encoding="utf-8")).get("strategy_pool", {})
+    except Exception:
+        pool = {}
     if not pool:
-        parser.error("需要至少一个策略池开关（--smoke / --followave）")
+        # 兼容：配置为空时用 flags 构造（首次迁移路径）
+        if args.smoke:
+            pool["smoke"] = {"magic": 661901, "timeframe": "M5"}
+        if args.followave:
+            pool["m15_followave"] = {"magic": 661401, "timeframe": "M15"}
+            pool["m30_followave"] = {"magic": 661402, "timeframe": "M30"}
+    if not pool:
+        parser.error("策略池为空：配置 runtime_config.json 或使用 --smoke/--followave")
 
     client = MT5Client()
     engine = Engine(client, pool=pool, mode=args.mode)
