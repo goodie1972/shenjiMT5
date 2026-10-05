@@ -268,6 +268,7 @@ class MT5Client:
                 "order_type": ptype,                       # 旧前端 Position 契约别名
                 "volume": float(p.volume), "price_open": float(p.price_open),
                 "price_current": float(p.price_current),
+                "current_price": float(p.price_current),          # 契约别名
                 "profit": float(p.profit), "swap": float(getattr(p, "swap", 0.0) or 0.0),
                 "sl": float(getattr(p, "sl", 0.0) or 0.0), "tp": float(getattr(p, "tp", 0.0) or 0.0),
                 "stop_loss": float(getattr(p, "sl", 0.0) or 0.0),    # 契约别名
