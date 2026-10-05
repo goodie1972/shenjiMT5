@@ -8,7 +8,7 @@ import {
 } from 'naive-ui'
 import {
   getReports, getReportById, getReportTimeline, generateReport,
-  getPrice,
+  getPrice, apiFetch,
 } from '@/api/client'
 
 const { t } = useI18n()
@@ -189,7 +189,57 @@ watch(activeTab, async (tab) => {
     await nextTick()
     renderAccuracyChart()
   }
+  if (tab === 'shadow') {
+    await loadShadowData()
+    await nextTick()
+    renderShadowChart()
+  }
 })
+
+// —— 影子对照（D7：MT5 demo vs MT4 实盘周度对照）——
+const shadowData = ref<any>(null)
+const shadowLoading = ref(false)
+const shadowChartRef = ref<HTMLDivElement>()
+
+async function loadShadowData() {
+  shadowLoading.value = true
+  try {
+    const res = await apiFetch('/api/shadow/chart?days=14')
+    shadowData.value = await res.json()
+  } catch { shadowData.value = null }
+  shadowLoading.value = false
+}
+
+function renderShadowChart() {
+  const el = shadowChartRef.value
+  if (!el) return
+  const d = shadowData.value
+  if (!d || !d.days || d.days.length === 0) {
+    el.innerHTML = '<div style="text-align:center;padding:40px;color:#888">影子对照数据积累中（开市交易后自动生成）</div>'
+    return
+  }
+  const pairs: [string, number[], number[]][] = [
+    ['M30', d.m30_ours, d.m30_old],
+    ['M15', d.m15_ours, d.m15_old],
+  ]
+  const maxAbs = Math.max(10, ...d.days.flatMap((_: any, i: number) =>
+    pairs.flatMap(([, a, b]) => [Math.abs((a as number[])[i]), Math.abs((b as number[])[i])])))
+  const scale = (v: number) => Math.max(4, (Math.abs(v) / maxAbs) * 130)
+  let html = '<div style="display:flex;align-items:flex-end;gap:14px;height:200px;padding:0 10px;overflow-x:auto">'
+  d.days.forEach((day: string, i: number) => {
+    for (const [nm, ours, old] of pairs) {
+      const a = (ours as number[])[i]
+      const b = (old as number[])[i]
+      html += `<div style="display:flex;flex-direction:column;align-items:center;min-width:38px">`
+      html += `<div style="display:flex;align-items:flex-end;gap:3px;height:170px">`
+      html += `<div title="${nm} MT5 ${a}" style="width:11px;height:${scale(a)}px;background:${a >= 0 ? '#0ecb81' : '#f6465d'}"></div>`
+      html += `<div title="${nm} MT4 ${b}" style="width:11px;height:${scale(b)}px;background:${b >= 0 ? '#7ee2c8' : '#ff9d9d'};border:1px dashed #666"></div>`
+      html += `</div><span style="font-size:10px;color:#888">${day.slice(-5)}</span></div>`
+    }
+  })
+  html += '</div><div style="font-size:11px;color:#888;margin-top:6px">实心=MT5 demo ｜ 虚线边框=MT4 实盘 ｜ $（0.01 手）/日</div>'
+  el.innerHTML = html
+}
 
 // 安全解析 content
 const sections = computed(() => {
@@ -279,12 +329,13 @@ function nbVarArrow(score: number): string {
         <n-tab-pane name="daily" :tab="$t('report.daily')" />
         <n-tab-pane name="weekly" :tab="$t('report.weekly')" />
         <n-tab-pane name="review" :tab="$t('report.review_tab')" />
+        <n-tab-pane name="shadow" tab="影子对照" />
       </n-tabs>
 
       <!-- 时间轴 -->
       <div style="flex: 1; overflow-y: auto;">
         <!-- 日报/周报时间轴 -->
-        <div v-if="timelineItems.length === 0 && !loading" style="padding: 16px;">
+        <div v-if="timelineItems.length === 0 && !loading && activeTab !== 'shadow'" style="padding: 16px;">
           <n-empty :description="$t('report.no_report')">
             <template #extra>
               <n-button size="small" secondary :loading="generating" @click="handleGenerate">
@@ -325,6 +376,17 @@ function nbVarArrow(score: number): string {
 
     <!-- 右侧内容区 -->
     <div style="flex: 1; overflow-y: auto; padding-left: 8px;">
+
+      <!-- 影子对照（D7：晋升核验证据页）-->
+      <div v-if="activeTab === 'shadow'" style="margin-bottom: 16px;">
+        <n-card :bordered="false">
+          <h3 style="margin:0 0 4px;font-size:15px">影子对照 · MT5 demo vs MT4 实盘（近 14 天）</h3>
+          <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px">
+            方向一致率 ≥90%（±2 bar）为晋升判据 ｜ 实心柱=MT5 demo ｜ 虚线边框=MT4 实盘 ｜
+            数据源 tools/weekly_shadow_report.py ｜ 判据 T2.6 修订</p>
+          <div ref="shadowChartRef" style="min-height:210px"></div>
+        </n-card>
+      </div>
 
 
       <!-- ══════════════════════════════════════════════════
