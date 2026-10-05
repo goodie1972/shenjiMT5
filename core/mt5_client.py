@@ -137,6 +137,10 @@ class MT5Client:
                 MARGIN_MODE_RETAIL_HEDGING: "hedging（对冲）",
                 MARGIN_MODE_RETAIL_NETTING: "netting（净持）",
             }.get(margin_mode, f"unknown({margin_mode})"),
+            # 旧前端 AccountInfo 契约字段（U-E1）——MT5 字段名 margin_free
+            "margin": float(acc.margin),
+            "free_margin": float(acc.margin_free),
+            "leverage": int(acc.leverage),
         }
 
     # ── symbol spec（D4/D6 探测点）───────────────────────────
@@ -251,16 +255,47 @@ class MT5Client:
 
     # ── 持仓 ─────────────────────────────────────────────────
     def positions_open(self, symbol: str) -> list[dict]:
-        """当前持仓（G9/G4/G10 的数据源）。type: BUY/SELL。"""
+        """当前持仓（G9/G4/G10 数据源 + 旧前端 Position 契约字段）。type/order_type: BUY/SELL。"""
         self.ensure_connected()
         pos = self._mt5.positions_get(symbol=symbol)
         if pos is None:
             raise MT5Error(f"positions_get({symbol}) 失败: {self._mt5.last_error()}")
-        return [{"ticket": p.ticket, "magic": int(p.magic),
-                 "type": "BUY" if int(p.type) == 0 else "SELL",
-                 "volume": float(p.volume), "price_open": float(p.price_open),
-                 "profit": float(p.profit), "time": int(p.time)}
-                for p in pos]
+        out = []
+        for p in pos:
+            ptype = "BUY" if int(p.type) == 0 else "SELL"
+            out.append({
+                "ticket": int(p.ticket), "magic": int(p.magic), "type": ptype,
+                "order_type": ptype,                       # 旧前端 Position 契约别名
+                "volume": float(p.volume), "price_open": float(p.price_open),
+                "price_current": float(p.price_current),
+                "profit": float(p.profit), "swap": float(getattr(p, "swap", 0.0) or 0.0),
+                "sl": float(getattr(p, "sl", 0.0) or 0.0), "tp": float(getattr(p, "tp", 0.0) or 0.0),
+                "stop_loss": float(getattr(p, "sl", 0.0) or 0.0),    # 契约别名
+                "take_profit": float(getattr(p, "tp", 0.0) or 0.0),   # 契约别名
+                "comment": str(getattr(p, "comment", "") or ""),
+                "symbol": str(getattr(p, "symbol", symbol) or symbol),
+                "time": int(p.time),
+                "open_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(int(p.time))),
+            })
+        return out
+
+    def modify_position_sltp(self, symbol: str, position_ticket: int,
+                             sl: float = 0.0, tp: float = 0.0) -> dict:
+        """改 SL/TP（TRADE_ACTION_SLTP；0 = 清除该向保护）。"""
+        self.ensure_connected()
+        mt5 = self._mt5
+        request = {
+            "action": mt5.TRADE_ACTION_SLTP,
+            "symbol": symbol,
+            "position": int(position_ticket),
+            "sl": float(sl), "tp": float(tp),
+        }
+        result = mt5.order_send(request)
+        if result is None:
+            raise MT5Error(f"modify SL/TP 返回 None: {mt5.last_error()}")
+        if result.retcode != mt5.TRADE_RETCODE_DONE:
+            raise MT5Error(f"改单被拒 retcode={result.retcode} comment={result.comment}")
+        return {"retcode": result.retcode}
 
     def close_position(self, symbol: str, position_ticket: int, direction: str,
                        volume: float, magic: int = 0,

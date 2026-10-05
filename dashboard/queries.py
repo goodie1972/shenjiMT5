@@ -190,15 +190,15 @@ def risk_overview() -> list[dict]:
     if day is None:
         rows.append(("G3", "日亏 12%", "—", "无成交数据"))
     else:
-        hit = day < 0 and day_pct >= P["max_daily_loss_pct"]
-        rows.append(("G3", "日亏 12%", "拦截" if hit else "放行",
-                     f"今日 {day:+.2f}（{day_pct:.1f}%）"))
+        hit = day < 0 and day_pct is not None and day_pct >= P["max_daily_loss_pct"]
+        detail = f"今日 {day:+.2f}（{day_pct:.1f}%）" if day_pct is not None else f"今日 {day:+.2f}"
+        rows.append(("G3", "日亏 12%", "拦截" if hit else "放行", detail))
     if week is None:
         rows.append(("G3b", "周回撤 15%", "—", "无成交数据"))
     else:
-        hit = week < 0 and week_pct >= P["weekly_max_drawdown_pct"]
-        rows.append(("G3b", "周回撤 15%", "拦截" if hit else "放行",
-                     f"本周 {week:+.2f}（{week_pct:.1f}%）"))
+        hit = week < 0 and week_pct is not None and week_pct >= P["weekly_max_drawdown_pct"]
+        detail = f"本周 {week:+.2f}（{week_pct:.1f}%）" if week_pct is not None else f"本周 {week:+.2f}"
+        rows.append(("G3b", "周回撤 15%", "拦截" if hit else "放行", detail))
     rows.append(("G4", "浮亏 10%", "—", "按策略评估，随持仓显示"))
     mo = market_open_now()
     rows.append(("G5", "市场开市", "放行" if mo else "拦截",

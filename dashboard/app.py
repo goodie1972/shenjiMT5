@@ -1,25 +1,35 @@
-"""dashboard/app.py — 监控面板（v1 纯只读，UI_APP_PLAN §0）。
+"""dashboard/app.py — FastAPI 应用。
 
-纪律：不提供任何交易写操作；DB 只读；终端只做读调用。
-启动：python tools/run_dashboard.py [--host 127.0.0.1] [--port 8800]
+两条 UI 前端共用一个后端（/api 与 /ws）：
+- 根路径 `/`      ：fork 的旧前端 SPA（web/dist，用户选定的 E 路线底座；需先 npm run build）
+- `/v2/*`         ：v2 HTMX 监控页（内部工具；总览/流水/影子）
+- `/api/*`        ：U-E1 legacy REST（旧前端契约形状）+ v2 面板 JSON
+- `/ws`           ：WS hub（prices/positions/account/logs 通道）
+
+token 认证：设环境变量 DASHBOARD_TOKEN 后启用（?token= 或 Cookie）。
 """
 
 from __future__ import annotations
 
 import os
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, Request, WebSocket
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from dashboard import queries
+from dashboard.legacy_api import router as legacy_router
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(HERE)
+WEB_DIST = os.path.join(REPO_ROOT, "web", "dist")
+HAS_WEB_DIST = os.path.exists(os.path.join(WEB_DIST, "index.html"))
 
-app = FastAPI(title="神机 MT5 监控", docs_url=None, redoc_url=None)
+app = FastAPI(title="神机 MT5", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=os.path.join(HERE, "static")), name="static")
+if HAS_WEB_DIST:
+    app.mount("/assets", StaticFiles(directory=os.path.join(WEB_DIST, "assets")), name="spa-assets")
 templates = Jinja2Templates(directory=os.path.join(HERE, "templates"))
 
 
@@ -34,11 +44,14 @@ def _f_sign(v):
 templates.env.filters["cls"] = _f_cls
 templates.env.filters["sign"] = _f_sign
 
+# ── legacy API（U-E1：旧前端契约形状）────────────────────────
+app.include_router(legacy_router)
+
+# ── token 认证（可选）────────────────────────────────────────
 _TOKEN = os.environ.get("DASHBOARD_TOKEN", "")
 
 
 def _check_token(request: Request) -> None:
-    """可选认证：设置环境变量 DASHBOARD_TOKEN 后，请求须带 ?token= 或 Cookie。"""
     if not _TOKEN:
         return
     if request.query_params.get("token") == _TOKEN:
@@ -48,20 +61,39 @@ def _check_token(request: Request) -> None:
     raise HTTPException(status_code=401, detail="token required")
 
 
-@app.get("/", response_class=HTMLResponse)
-def overview(request: Request):
+# ── WS hub ───────────────────────────────────────────────────
+@app.websocket("/ws")
+async def ws_endpoint(ws: WebSocket):
+    from dashboard import wshub
+    import asyncio
+    await wshub.register(ws)
+    if not getattr(wshub, "_task_started", False):
+        wshub._task_started = True
+        asyncio.create_task(wshub.broadcaster())
+    try:
+        while True:
+            await ws.receive_text()            # 保活；断开时抛 WebSocketDisconnect
+    except Exception:
+        pass
+    finally:
+        wshub.unregister(ws)
+
+
+# ── v2 HTMX 监控页（内部工具；前缀 /v2）────────────────────
+@app.get("/v2", response_class=HTMLResponse, include_in_schema=False)
+def v2_overview(request: Request):
     _check_token(request)
     return templates.TemplateResponse(request, "overview.html", _overview_ctx())
 
 
-@app.get("/partials/overview", response_class=HTMLResponse)
-def overview_partial(request: Request):
+@app.get("/v2/partials/overview", response_class=HTMLResponse, include_in_schema=False)
+def v2_overview_partial(request: Request):
     _check_token(request)
     return templates.TemplateResponse(request, "_overview_body.html", _overview_ctx())
 
 
-@app.get("/flows", response_class=HTMLResponse)
-def flows(request: Request, limit: int = 100):
+@app.get("/v2/flows", response_class=HTMLResponse, include_in_schema=False)
+def v2_flows(request: Request, limit: int = 100):
     _check_token(request)
     ctx = {
         "signals": queries.signals_tail(min(limit, 500)),
@@ -73,14 +105,15 @@ def flows(request: Request, limit: int = 100):
     return templates.TemplateResponse(request, "flows.html", ctx)
 
 
-@app.get("/shadow", response_class=HTMLResponse)
-def shadow(request: Request):
+@app.get("/v2/shadow", response_class=HTMLResponse, include_in_schema=False)
+def v2_shadow(request: Request):
     _check_token(request)
     return templates.TemplateResponse(request, "shadow.html",
                                       {"report": queries.latest_shadow_report(),
                                        "active": "shadow"})
 
 
+# ── v2 面板 JSON ─────────────────────────────────────────────
 @app.get("/api/overview")
 def api_overview(request: Request):
     _check_token(request)
@@ -139,3 +172,31 @@ def _overview_ctx() -> dict:
         "market_open": queries.market_open_now(),
         "active": "overview",
     }
+
+
+# ── fork 前端 SPA（根路径；history 回退）────────────────────
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+def spa_index():
+    if HAS_WEB_DIST:
+        return HTMLResponse(open(os.path.join(WEB_DIST, "index.html"),
+                                 encoding="utf-8").read())
+    return templates.TemplateResponse(request, "overview.html", _overview_ctx())
+
+
+@app.get("/{spa_path:path}", response_class=HTMLResponse, include_in_schema=False)
+def spa_fallback(spa_path: str, request: Request):
+    """非 API/非 /v2/非 /static 的未知路径 → SPA（history 回退）；其余 404。"""
+    if spa_path.startswith(("api/", "ws", "static/", "assets/", "v2/", "docs/")):
+        raise HTTPException(404)
+    full = os.path.join(WEB_DIST, spa_path)
+    if HAS_WEB_DIST and os.path.isfile(full):
+        ext = os.path.splitext(full)[1]
+        ctype = {".js": "text/javascript", ".css": "text/css", ".png": "image/png",
+                 ".svg": "image/svg+xml", ".html": "text/html", ".ico": "image/x-icon",
+                 ".webmanifest": "application/json"}.get(ext, "application/octet-stream")
+        return HTMLResponse(open(full, "rb").read(), media_type=ctype)
+    if HAS_WEB_DIST:
+        return spa_index()
+    raise HTTPException(404)
+
+
