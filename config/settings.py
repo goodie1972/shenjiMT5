@@ -6,6 +6,7 @@
 """
 
 import os
+import sys
 import time
 from datetime import datetime, timezone, timedelta
 
@@ -20,7 +21,11 @@ TF_SECONDS = {
 }
 
 # ── 路径 ─────────────────────────────────────────────────────
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# PyInstaller 打包态：__file__ 指向解包临时目录 → 以 exe 所在目录为根
+if getattr(sys, "frozen", False):
+    REPO_ROOT = os.path.dirname(sys.executable)
+else:
+    REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(REPO_ROOT, "data")
 DB_PATH = os.path.join(DATA_DIR, "market_data.db")
 JOURNAL_DIR = os.path.join(DATA_DIR, "journal")

@@ -11,6 +11,21 @@
 | ShenjiWatchdog（计划任务，每 5 分钟） | 心跳陈旧且无进程 → 自动拉起 | `schtasks /Query /TN ShenjiWatchdog` |
 | ShenjiBackup（计划任务，每日 20:00） | 打包 journal/db/offset → `../shenjiMT5_backups/`（留 14 份） | 看备份目录新文件 |
 
+## 桌面版打包（PyInstaller）
+
+```powershell
+# 构建（需 web/dist 已 build）
+python -m PyInstaller ShenjiMT5.spec --noconfirm
+# 产物 dist/ShenjiMT5/（onedir 整目录分发）
+# 首次部署需把运行时数据拷入安装目录：
+robocopy data "dist\ShenjiMT5\data" //E
+robocopy config "dist\ShenjiMT5\config" //E //XF runtime_config.json safety_lock.txt
+# 启动
+dist\ShenjiMT5\ShenjiMT5.exe [--port 8806]
+```
+也可用根目录 `神机MT5.bat` 双击直接启动（pythonw + run_app，无需打包）。
+体积主因 = Python 运行时 + webview + 前端资产（onedir 791MB 属正常）。
+
 ## 常用命令
 
 ```powershell

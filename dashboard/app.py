@@ -24,9 +24,15 @@ from dashboard.ue2_api import router as ue2_router
 from dashboard.ue3_api import router as ue3_router
 from dashboard.ai_api import router as ai_router
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-REPO_ROOT = os.path.dirname(HERE)
-WEB_DIST = os.path.join(REPO_ROOT, "web", "dist")
+# PyInstaller 打包态：__file__ 在 _MEIPASS 解包目录内 → 资产随 datas 走
+if getattr(__import__("sys"), "frozen", False):
+    import sys as _sys
+    HERE = os.path.join(_sys._MEIPASS, "dashboard")
+    WEB_DIST = os.path.join(_sys._MEIPASS, "web", "dist")
+else:
+    HERE = os.path.dirname(os.path.abspath(__file__))
+    REPO_ROOT = os.path.dirname(HERE)
+    WEB_DIST = os.path.join(REPO_ROOT, "web", "dist")
 HAS_WEB_DIST = os.path.exists(os.path.join(WEB_DIST, "index.html"))
 
 app = FastAPI(title="神机 MT5", docs_url=None, redoc_url=None)
