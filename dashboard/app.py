@@ -22,6 +22,7 @@ from dashboard import queries
 from dashboard.legacy_api import router as legacy_router
 from dashboard.ue2_api import router as ue2_router
 from dashboard.ue3_api import router as ue3_router
+from dashboard.ai_api import router as ai_router
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(HERE)
@@ -50,6 +51,7 @@ templates.env.filters["sign"] = _f_sign
 app.include_router(legacy_router)
 app.include_router(ue2_router)
 app.include_router(ue3_router)
+app.include_router(ai_router)
 
 # ── token 认证（可选）────────────────────────────────────────
 _TOKEN = os.environ.get("DASHBOARD_TOKEN", "")

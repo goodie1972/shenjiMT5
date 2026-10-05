@@ -13,14 +13,14 @@
 | 3 | `/api/data/candles`、`/api/market/candles` | K 线终端 | **部分**（`/api/candles` 已有，需对齐前端参数形状） | U-E1 |
 | 4 | `/api/account/*` | 账户面板 | **部分**（account_summary 已有） | U-E1 |
 | 5 | `/api/trades/history`、`/api/trades/stats` | 历史成交/stats | **部分**（trades 表已有；stats 按旧库口径补） | U-E1 |
-| 6 | `/api/engine/health`、`/api/engine/start|stop|restart` | 巡检/启停 | **缺**（控制通道：面板进程→引擎进程） | U-E2 |
-| 7 | `/api/config/*`（risk/news/paper/strategy-pool） | 运行配置 | **缺**（runtime.json 移植） | U-E2 |
-| 8 | `/api/strategies/available`、`/logics`、`/batch-remove` | 策略中心 | **缺**（scanner 已有） | U-E2 |
-| 9 | WebSocket hub（prices 0.3s/positions 5s/account 10s/logs 1s） | 实时刷新 | **缺**——首版前端轮询降级，后补**同通道名** WS | U-E2 |
-| 10 | `/api/reports/*`、影子对照 Tab | 日报周报 | **部分**（weekly_shadow_report 脚本已有，需 REST 化） | U-E3 |
-| 11 | `/api/backtest/*`（run/status/results/history/indicators） | 回测中心 | **缺**（D3 回测框架 + 子进程作业） | U-E3 |
-| 12 | `/api/news/calendar`、`/api/news/gold` | 新闻日历/G1 | **缺**（ForexFactory 抓取移植） | U-E3 |
-| 13 | `/api/ai/*`（chat SSE/persona/skills/agent-settings）+ `/api/llm/*` | AI agent | **缺**（D5/D6：底座重写 + PA 工具 + sidecar） | U-E4 |
+| 6 | `/api/engine/health`、`/api/engine/start|stop|restart` | 巡检/启停 | **✅ 已实现**（ue2_api：PowerShell 进程控制） | ✅ |
+| 7 | `/api/config/*`（risk/news/paper/strategy-pool） | 运行配置 | **✅ 已实现**（runtime_config.json 白名单存储，池=单源） | ✅ |
+| 8 | `/api/strategies/available`、`/logics`（占位）、`/batch-remove` | 策略中心 | **✅ 已实现**（scanner+inspect） | ✅ |
+| 9 | WebSocket hub（prices/positions/account/logs） | 实时刷新 | **✅ 最小 hub 已实现**（wshub.py：prices 1s/其余 5s，同通道名） | ✅ |
+| 10 | `/api/reports/*`、影子对照 Tab | 日报周报 | **✅ 已实现**（ue3_api：日报生成/列表/详情；影子 Tab 前端注入已演示） | ✅ |
+| 11 | `/api/backtest/*`（run/status/results/history/indicators） | 回测中心 | **✅ 已实现**（job_runner 子进程作业，实测 M30/M15 作业完成） | ✅ |
+| 12 | `/api/news/calendar`、`/api/news/gold` | 新闻日历/G1 | **占位**（诚实空日历；真实数据源后置） | 后置 |
+| 13 | `/api/ai/*`（chat SSE/persona/skills/agent-settings）+ `/api/llm/*` | AI agent | **✅ 已实现**（dashboard/ai_api.py：9 工具注册表+SSE 工具循环+会话+persona；provider=env/文件最小层；get_pa_analysis 带 sidecar 优雅降级） | ✅ |
 | 14 | `/api/mcp/*`、`/api/ai/skill-store/*` | MCP/技能市场 | **决策不做**（v1；需要时按旧库 682 行设计加回） | — |
 | 15 | `/api/version/*` + 自动更新 | 更新器 | **决策不做** | — |
 
