@@ -242,6 +242,16 @@ function renderShadowChart() {
 }
 
 // 安全解析 content
+// 治理①：时间线按自然日聚合——每日只显示最新快照（旧版 10 分钟一条刷屏）
+const timelineLatest = computed(() => {
+  const byDay: Record<string, any> = {}
+  for (const it of timelineItems.value) {
+    const day = String(it.created_at || '').slice(0, 10)
+    byDay[day] = it                    // 后端升序 → 后写覆盖 = 当日最新
+  }
+  return Object.entries(byDay).sort((a, b) => b[0].localeCompare(a[0])).map(([, v]) => v)
+})
+
 const sections = computed(() => {
   const r = currentReport.value
   if (!r) return []
@@ -344,7 +354,7 @@ function nbVarArrow(score: number): string {
             </template>
           </n-empty>
         </div>
-        <div v-for="item in timelineItems" :key="item.id"
+        <div v-for="item in timelineLatest" :key="item.id"
           :style="{
             padding: '4px 8px',
             cursor: 'pointer',

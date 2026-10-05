@@ -231,7 +231,9 @@ def api_strategies_available():
         magic = getattr(mod, "STRATEGY_MAGIC", 0)
         pool_cfg = pool.get(name, {})
         out.append({
-            "name": name, "magic": int(pool_cfg.get("magic", magic) or magic),
+            "id": name,                                # 池键 = 策略名（旧库同款）
+            "name": name, "default_magic": int(magic),
+            "magic": int(pool_cfg.get("magic", magic) or magic),
             "timeframe": pool_cfg.get("timeframe", getattr(cls, "TIMEFRAME", "M30")),
             "version": version,
             "enabled": name in pool,  # 池真源 = runtime_config
@@ -240,7 +242,7 @@ def api_strategies_available():
             "double_first": pool_cfg.get("double_first", False),
             "file": os.path.basename(inspect.getfile(cls)),
         })
-    return out
+    return {"strategies": out}
 
 
 @router.post("/strategies/batch-remove")

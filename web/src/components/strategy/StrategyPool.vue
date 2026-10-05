@@ -42,6 +42,16 @@ interface PoolEntry {
 
 const allStrategies = ref<StrategyMeta[]>([])
 const pool = ref<Record<string, PoolEntry>>({})
+
+const search = ref('')
+const filteredStrategies = computed(() => {
+  const q = search.value.trim().toLowerCase()
+  if (!q) return allStrategies.value
+  return allStrategies.value.filter((m: any) =>
+    (m.name || '').toLowerCase().includes(q) ||
+    String(m.magic ?? '').includes(q) ||
+    (m.timeframe || '').toLowerCase().includes(q))
+})
 const runningStrategies = ref<Set<string>>(new Set())
 const expanded = ref<Set<string>>(new Set())
 const loading = ref(true)
@@ -377,7 +387,9 @@ async function confirmDeleteClick() {
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:4px;">
       <input ref="fileInput" type="file" accept=".py" style="display:none" @change="handleUpload" />
       <template v-if="!deleteMode">
-        <n-button size="small" secondary :loading="refreshing" @click="loadStrategies(true)">{{ $t('strategy.refresh') }}</n-button>
+        <n-input v-model:value="search" size="small" clearable placeholder="搜索策略 / Magic / TF"
+        style="width: 200px; margin-right: auto;" />
+      <n-button size="small" secondary :loading="refreshing" @click="loadStrategies(true)">{{ $t('strategy.refresh') }}</n-button>
         <n-button size="small" secondary @click="fileInput?.click()">{{ $t('strategy.import_strategy') }}</n-button>
         <n-button size="small" secondary @click="startDelete">{{ $t('strategy.delete_strategy') }}</n-button>
       </template>
@@ -391,7 +403,7 @@ async function confirmDeleteClick() {
     <n-spin :show="loading">
       <n-empty v-if="!loading && !allStrategies.length" :description="$t('strategy.no_strategies')" />
 
-      <n-card v-for="meta in allStrategies" :key="meta.id" size="small" :bordered="true"
+      <n-card v-for="meta in filteredStrategies" :key="meta.id" size="small" :bordered="true"
         :style="{
           opacity: pool[meta.id]?.enabled ? 1 : 0.55,
           borderLeft: `4px solid ${getColor(meta.name)}`,
