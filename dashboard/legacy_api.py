@@ -105,20 +105,53 @@ def api_market_price():
 
 
 @router.get("/market/candles")
-def api_market_candles(timeframe: str = "H1", count: int = 100):
-    from data import database as db
+def api_market_candles(timeframe: str = "H1", count: int = 100, before: int | None = None):
+    """K 线（显示层）。
+
+    - 常规加载/轮询（无 before）→ **直连 MT5 实时取数**（与顶栏现价同源）：
+      L1 库只有引擎策略池周期（M15/M30）被持续维护，其余周期会停在最近一次
+      回填，图表曾因此显示 5 天前的旧 K 线。server 时间经 to_utc 转 UTC。
+    - 历史滚动加载（带 before）→ 走 L1 只读库（深历史完整且不变）。
+    - 终端不可达/offset 未校准 → 回退 L1 只读库（显示层降级；fail-closed
+      纪律只约束门禁路径，图表允许优雅降级）。
+    """
     if timeframe not in settings.TIMEFRAMES:
         raise HTTPException(400, f"非法周期 {timeframe}")
-    ro = db.readonly_connect()
+    n = min(max(count, 10), 5000)
+
+    def _from_db(before_ts: int | None) -> list:
+        ro = db.readonly_connect()
+        try:
+            if before_ts:
+                rows = ro.execute(
+                    "SELECT timestamp, open, high, low, close, volume FROM ohlcv"
+                    " WHERE timeframe=? AND timestamp<? ORDER BY timestamp DESC LIMIT ?",
+                    (timeframe, before_ts, n)).fetchall()
+            else:
+                rows = ro.execute(
+                    "SELECT timestamp, open, high, low, close, volume FROM ohlcv"
+                    " WHERE timeframe=? ORDER BY timestamp DESC LIMIT ?",
+                    (timeframe, n)).fetchall()
+        finally:
+            ro.close()
+        return [{"time": int(r[0]), "open": r[1], "high": r[2], "low": r[3],
+                 "close": r[4], "volume": r[5]} for r in reversed(rows)]
+
+    if before:
+        return _from_db(int(before))
+
     try:
-        rows = ro.execute(
-            "SELECT timestamp, open, high, low, close, volume FROM ohlcv"
-            " WHERE timeframe=? ORDER BY timestamp DESC LIMIT ?",
-            (timeframe, min(max(count, 10), 5000))).fetchall()
-    finally:
-        ro.close()
-    return [{"time": int(r[0]), "open": r[1], "high": r[2], "low": r[3],
-             "close": r[4], "volume": r[5]} for r in reversed(rows)]
+        client = get_client()
+        if client is None:
+            raise RuntimeError("MT5 终端不可达")
+        rates = client.copy_rates(settings.SYMBOL, timeframe, n)
+        # 末根是 forming bar（bar0）——显示层与行情软件一致，保留
+        return [{"time": client.to_utc(int(r["time"])), "open": r["open"],
+                 "high": r["high"], "low": r["low"], "close": r["close"],
+                 "volume": r["volume"]} for r in rates]
+    except Exception as e:
+        logger.warning("[market] %s 实时 K 线失败（%s），回退 L1 只读库", timeframe, e)
+        return _from_db(None)
 
 
 # ── 引擎状态（家族 6 只读部分）───────────────────────────────
