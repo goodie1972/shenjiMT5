@@ -150,3 +150,24 @@ class TestOrderFailure:
         sig = ro.execute("SELECT status, exit_reason FROM signals").fetchone()
         ro.close()
         assert sig["status"] == "voided" and sig["exit_reason"] == "order_failed"
+
+
+class TestVerifyEntrySignalShape:
+    def test_verify_entry_receives_direction_key(self, tmp_db):
+        """回归（2026-10-07）：athlete 曾传 {"signal": direction}，而契约形状是
+        {"direction": ...}（test_followave 同款）——followave 读不到 direction
+        默认 "BUY"，导致所有 SELL 信号被 BUY 规则复核而必然作废。"""
+        a = make_athlete(tmp_db)
+        s = FakeStrategy()
+        seen = {}
+
+        def capture(signal, price, latest):
+            seen.update(signal)
+            return True
+
+        s._verify_entry = capture
+        submit_with_signal(a, s, direction="SELL", db_path=tmp_db)
+        executed = a.verify_tick({})
+        assert executed, "SELL 信号复核应通过并执行"
+        assert seen.get("direction") == "SELL", (
+            f"_verify_entry 收到的 signal 键错误: {seen}")
