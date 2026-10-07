@@ -1384,5 +1384,8 @@
   "backtest.entry_time": "Entry Time",
   "patrol.critical_count": "{count} critical",
   "patrol.warning_count": "{count} warnings",
-  "strategy.only_py": "Only .py strategy files are supported"
+  "strategy.only_py": "Only .py strategy files are supported",
+  "strategy.mode_system": "Trading Mode (System)",
+  "strategy.mode_system_confirm": "All strategies will trade in \"{mode}\" mode (Paper = MT5 demo account; Live = real account, requires D9 triple confirmation). Takes effect after engine restart. Switch now?",
+  "strategy.mode_system_hint": "System-level trading mode: all strategies follow it uniformly (no per-strategy override). Paper = MT5 demo account; Live = real account. Takes effect after engine restart."
 }

@@ -265,7 +265,12 @@ def api_strategies_available():
     sys.path.insert(0, settings.REPO_ROOT)
     from strategies import scanner
     classes = scanner.scan(force=True)
-    pool = _load().get("strategy_pool", {})
+    with _cfg_lock:
+        cfg = _load()
+    pool = cfg.get("strategy_pool", {})
+    # 系统交易模式（纸面=demo / 实盘=live）唯一来源：risk.engine_mode。
+    # 策略不再有独立 mode（旧字段已移除），一律跟随系统。
+    engine_mode = _risk_flat(cfg).get("engine_mode", "demo")
     out = []
     for name, cls in sorted(classes.items()):
         mod = sys.modules[cls.__module__]
@@ -279,12 +284,12 @@ def api_strategies_available():
             "timeframe": pool_cfg.get("timeframe", getattr(cls, "TIMEFRAME", "M30")),
             "version": version,
             "enabled": pool_cfg.get("enabled", False),  # 池真源 = runtime_config
-            "mode": pool_cfg.get("mode", "live"),
+            "mode": engine_mode,                        # 跟随系统（契约兼容保留键）
             "max_positions": pool_cfg.get("max_positions", 1),
             "double_first": pool_cfg.get("double_first", False),
             "file": os.path.basename(inspect.getfile(cls)),
         })
-    return {"strategies": out}
+    return {"strategies": out, "engine_mode": engine_mode}
 
 
 @router.post("/strategies/batch-remove")

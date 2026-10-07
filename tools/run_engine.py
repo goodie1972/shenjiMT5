@@ -46,9 +46,10 @@ def main() -> int:
     parser.add_argument("--smoke", action="store_true", help="启用 smoke 冒烟策略池")
     parser.add_argument("--followave", action="store_true",
                         help="启用 m15/m30_followave（M3 影子运行，demo 0.01 手）")
-    parser.add_argument("--force", action="store_true", help="启动后立即强制全扫描一次")
-    parser.add_argument("--duration", type=int, default=0, help="运行秒数（0=常驻）")
-    parser.add_argument("--mode", default="demo", choices=["demo", "live"])
+parser.add_argument("--force", action="store_true", help="启动后立即强制全扫描一次")
+parser.add_argument("--duration", type=int, default=0, help="运行秒数（0=常驻）")
+parser.add_argument("--mode", default=None, choices=[None, "demo", "live"],
+                    help="交易模式覆盖；缺省读系统设定 runtime_config risk.engine_mode")
     args = parser.parse_args()
 
     if args.mode == "live":
@@ -80,6 +81,19 @@ def main() -> int:
             pool["m30_followave"] = {"magic": 661402, "timeframe": "M30"}
     if not pool:
         parser.error("策略池为空：配置 runtime_config.json 或使用 --smoke/--followave")
+
+    # 交易模式（纸面=demo / 实盘=live）：系统设定唯一来源 = runtime_config
+    # risk.engine_mode；CLI --mode 仅作显式覆盖（测试/工具用）。
+    if args.mode is None:
+        try:
+            args.mode = _json.load(open(rc_path, encoding="utf-8")) \
+                .get("risk", {}).get("engine_mode", "demo")
+        except Exception:
+            args.mode = "demo"
+    if args.mode not in ("demo", "live"):
+        logging.getLogger(__name__).warning(
+            "[run_engine] engine_mode=%r 非法，回退 demo", args.mode)
+        args.mode = "demo"
 
     # 池条目健壮化：UI 保存的条目可能缺 timeframe/magic（历史回归曾致 KeyError），
     # 缺失键以 scanner 目录默认值兜底（scanner = 策略文件真源）。

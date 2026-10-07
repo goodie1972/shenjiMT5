@@ -1384,5 +1384,8 @@
   "backtest.entry_time": "入场时间",
   "patrol.critical_count": "{count} 个严重",
   "patrol.warning_count": "{count} 个警告",
-  "strategy.only_py": "仅支持 .py 策略文件"
+  "strategy.only_py": "仅支持 .py 策略文件",
+  "strategy.mode_system": "交易模式（系统级）",
+  "strategy.mode_system_confirm": "所有策略将统一以「{mode}」模式交易（纸面 = MT5 demo 账户；实盘 = 真实账户，需满足 D9 三重确认）。切换后需重启引擎生效，确定切换？",
+  "strategy.mode_system_hint": "系统级交易模式：所有策略统一跟随，不再单独设置。纸面 = MT5 demo 账户；实盘 = 真实账户。切换后需重启引擎生效。"
 }

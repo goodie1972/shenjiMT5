@@ -69,3 +69,29 @@ class TestToken:
         assert c2.get("/v2?token=secret123").status_code == 200
         monkeypatch.delenv("DASHBOARD_TOKEN")
         importlib.reload(app_mod)
+
+
+class TestStrategyModeFollowsSystem:
+    """策略模式跟系统（2026-10-07 用户决定）：策略不再有独立 mode，
+    /api/strategies/available 的 mode 必须等于系统设定 risk.engine_mode。"""
+
+    def test_available_mode_equals_engine_mode(self):
+        r_cfg = client.get("/api/config")
+        assert r_cfg.status_code == 200
+        engine_mode = r_cfg.json().get("engine_mode", "demo")
+        assert engine_mode in ("demo", "live")
+
+        r = client.get("/api/strategies/available")
+        assert r.status_code == 200
+        data = r.json()
+        assert data.get("engine_mode") == engine_mode
+        for s in data["strategies"]:
+            assert s["mode"] == engine_mode, (
+                f"{s['name']} mode={s['mode']} != 系统 engine_mode={engine_mode}")
+
+    def test_pool_entries_have_no_mode_key(self):
+        """runtime_config 池条目不得再携带独立 mode（UI 已移除该字段）。"""
+        from dashboard.ue2_api import _load
+        pool = _load().get("strategy_pool", {})
+        for name, cfg in pool.items():
+            assert "mode" not in cfg, f"池条目 {name} 仍带独立 mode 字段"

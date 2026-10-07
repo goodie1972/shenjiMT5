@@ -37,7 +37,6 @@ interface PoolEntry {
   timeframe: string
   max_positions: number
   double_first: boolean
-  mode: string  // "live" | "paper"
 }
 
 const allStrategies = ref<StrategyMeta[]>([])
@@ -160,11 +159,10 @@ async function loadStrategies(refresh = false) {
         timeframe: curr?.timeframe || meta.default_timeframe,
         max_positions: curr?.max_positions ?? 1,
         double_first: curr?.double_first ?? false,
-        mode: curr?.mode || 'live',
       }
     }
     pool.value = merged
-    allStrategies.value = Object.values(merged)
+    allStrategies.value = fetched
     if (refresh) {
       message.success(t('strategy.refreshed', { count: fetched.length }))
     }
@@ -204,15 +202,21 @@ onUnmounted(() => {
   if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null }
 })
 
-function handleModeChange(id: string, newMode: string) {
-  const entry = pool.value[id]
-  if (!entry || entry.mode === newMode) return
+// 系统交易模式（纸面=demo / 实盘=live）：所有策略统一跟随，不再单独设置。
+const systemMode = computed(() => (store.items.engine_mode as string) || 'demo')
+function handleSystemModeChange(newMode: string) {
+  if (newMode === systemMode.value) return
   dialog.warning({
-    title: t('strategy.mode'),
-    content: t('strategy.mode_switch_confirm', { count: entry.max_positions || 0 }),
+    title: t('strategy.mode_system'),
+    content: t('strategy.mode_system_confirm', {
+      mode: newMode === 'live' ? t('strategy.mode_live') : t('strategy.mode_paper'),
+    }),
     positiveText: t('common.confirm'),
     negativeText: t('common.cancel'),
-    onPositiveClick: () => { entry.mode = newMode },
+    onPositiveClick: async () => {
+      await store.update({ engine_mode: newMode })
+      message.info(t('strategy.mode_system_restart_hint'))
+    },
   })
 }
 
@@ -254,7 +258,6 @@ async function save() {
         timeframe: cfg.timeframe,
         max_positions: cfg.enabled ? (cfg.max_positions || 1) : 0,
         double_first: cfg.double_first,
-        mode: cfg.mode || 'live',
       }
     }
     await store.updateStrategyPool(payload)
@@ -384,8 +387,18 @@ async function confirmDeleteClick() {
       {{ $t('strategy.pool_hint') }}
     </n-alert>
 
-    <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:4px;">
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:4px;align-items:center;">
       <input ref="fileInput" type="file" accept=".py" style="display:none" @change="handleUpload" />
+      <n-space size="small" align="center" style="margin-right:auto;">
+        <n-text depth="3" style="font-size:12px;">{{ $t('strategy.mode_system') }}</n-text>
+        <n-select
+          :value="systemMode"
+          @update:value="handleSystemModeChange"
+          :options="[{ label: $t('strategy.mode_paper'), value: 'demo' }, { label: $t('strategy.mode_live'), value: 'live' }]"
+          size="small"
+          style="width: 96px;"
+        />
+      </n-space>
       <template v-if="!deleteMode">
         <n-input v-model:value="search" size="small" clearable placeholder="搜索策略 / Magic / TF"
         style="width: 200px; margin-right: auto;" />
@@ -421,25 +434,12 @@ async function confirmDeleteClick() {
               {{ meta.label || meta.name }}
             </n-tag>
             <n-tag v-if="runningStrategies.has(meta.name)" size="tiny" type="success" :bordered="false" style="font-weight:600;">{{ $t('strategy.running') }}</n-tag>
-            <n-tag v-if="pool[meta.id]?.mode === 'paper'" size="tiny" :bordered="false" type="warning" style="font-weight:600;">{{ $t('strategy.mode_paper') }}</n-tag>
             <n-tag v-if="meta.backup_file" size="tiny" :bordered="false" type="info">
               {{ meta.backup_file }}
             </n-tag>
           </div>
 
           <div style="display: flex; align-items: center; gap: 12px;">
-            <n-space size="small" align="center">
-              <n-text depth="3" style="font-size: 11px;">{{ $t('strategy.mode') }}</n-text>
-              <n-select
-                :value="pool[meta.id]?.mode || 'live'"
-                @update:value="(v: string) => handleModeChange(meta.id, v)"
-                :options="[{ label: $t('strategy.mode_live'), value: 'live' }, { label: $t('strategy.mode_paper'), value: 'paper' }]"
-                size="tiny"
-                style="width: 62px;"
-                :disabled="!pool[meta.id]?.enabled"
-                @click.stop
-              />
-            </n-space>
             <n-space size="small" align="center">
               <n-text depth="3" style="font-size: 11px;">{{ $t('strategy.magic') }}</n-text>
               <n-input :value="String(pool[meta.id]?.magic || '')" size="tiny"
