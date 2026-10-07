@@ -164,7 +164,7 @@ async function loadStrategies(refresh = false) {
       }
     }
     pool.value = merged
-    allStrategies.value = fetched
+    allStrategies.value = Object.values(merged)
     if (refresh) {
       message.success(t('strategy.refreshed', { count: fetched.length }))
     }

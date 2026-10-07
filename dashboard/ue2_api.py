@@ -75,8 +75,18 @@ def _risk_flat(cfg: dict) -> dict:
 # ── 运行配置 ─────────────────────────────────────────────────
 @router.get("/config")
 def api_config():
+    """完整运行时配置（旧库契约：扁平风控键 + strategy_pool + coordinator
+    + paper_trading + symbol）。前端 store 直接读 items.strategy_pool 等。"""
     with _cfg_lock:
-        return _risk_flat(_load())
+        cfg = _load()
+        out = _risk_flat(cfg)
+        out["strategy_pool"] = cfg.get("strategy_pool", {})
+        out["coordinator"] = cfg.get("coordinator", {"enabled": False})
+        out["paper_trading"] = {"enabled": False, "max_positions": None,
+                                "ignore_gates": False, "initial_balance": 0,
+                                "lot_size": None, **cfg.get("paper", {})}
+        out["symbol"] = getattr(settings, "SYMBOL", "XAUUSD")
+        return out
 
 
 @router.post("/config")
@@ -203,12 +213,44 @@ def api_engine_stop():
     return {"ok": True}
 
 
+HEARTBEAT_MAX_AGE = 120  # 秒；心跳超过此龄视为引擎离线（tick 周期 1s，冗余充足）
+
+
 @router.post("/engine/restart")
 def api_engine_restart():
     api_engine_stop()
     import time
     time.sleep(3)
     return api_engine_start()
+
+
+@router.get("/engine/strategies")
+def api_engine_strategies():
+    """引擎运行中的策略（旧库契约形状：running=对象数组 + available=名单）。
+
+    真源 = 引擎心跳文件（engine 每 tick 写入 ts+strategies）；心跳缺失或
+    过期 → 引擎离线，running 如实返回空数组，不拿配置启用冒充在线。
+    前端消费 running[].name（策略中心"运行中"标签 / 交易终端面板）。
+    """
+    running: list = []
+    hb = os.path.join(settings.LOG_DIR, "heartbeat.txt")
+    try:
+        with open(hb, encoding="utf-8") as f:
+            data = json.load(f)
+        # 兼容历史格式：旧心跳是纯时间戳整数（json.load 出 int）→ 视为离线
+        if isinstance(data, dict) and \
+                settings.utc_now() - int(data.get("ts", 0)) <= HEARTBEAT_MAX_AGE:
+            running = [s for s in (data.get("strategies") or [])
+                       if isinstance(s, dict) and s.get("name")]
+    except (OSError, TypeError, ValueError):
+        pass
+    try:
+        sys.path.insert(0, settings.REPO_ROOT)
+        from strategies import scanner
+        available = sorted(scanner.scan().keys())
+    except Exception:
+        available = []
+    return {"running": running, "available": available}
 
 
 try:
@@ -236,7 +278,7 @@ def api_strategies_available():
             "magic": int(pool_cfg.get("magic", magic) or magic),
             "timeframe": pool_cfg.get("timeframe", getattr(cls, "TIMEFRAME", "M30")),
             "version": version,
-            "enabled": name in pool,  # 池真源 = runtime_config
+            "enabled": pool_cfg.get("enabled", False),  # 池真源 = runtime_config
             "mode": pool_cfg.get("mode", "live"),
             "max_positions": pool_cfg.get("max_positions", 1),
             "double_first": pool_cfg.get("double_first", False),

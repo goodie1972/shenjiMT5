@@ -81,6 +81,22 @@ def main() -> int:
     if not pool:
         parser.error("策略池为空：配置 runtime_config.json 或使用 --smoke/--followave")
 
+    # 池条目健壮化：UI 保存的条目可能缺 timeframe/magic（历史回归曾致 KeyError），
+    # 缺失键以 scanner 目录默认值兜底（scanner = 策略文件真源）。
+    # enabled=false 的条目不进引擎（策略中心语义：禁用 = 不触发交易信号）。
+    pool = {n: c for n, c in pool.items() if c.get("enabled", True)}
+    from strategies import scanner
+    classes = scanner.scan(force=True)
+    for name, cfg in pool.items():
+        cls = classes.get(name)
+        if cfg.get("timeframe") is None and cls is not None:
+            cfg["timeframe"] = getattr(cls, "TIMEFRAME", "M30")
+        if not cfg.get("magic") and cls is not None:
+            cfg["magic"] = int(getattr(cls, "STRATEGY_MAGIC", 0) or 0)
+    bad = [n for n, c in pool.items() if not c.get("timeframe")]
+    if bad:
+        parser.error(f"策略池条目缺 timeframe 且 scanner 找不到默认值: {bad}")
+
     client = MT5Client()
     engine = Engine(client, pool=pool, mode=args.mode)
     engine.start()

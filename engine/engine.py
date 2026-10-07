@@ -103,14 +103,29 @@ class Engine:
             self._sleep(self.poll_seconds)
 
     def _write_heartbeat(self) -> None:
-        """心跳文件（运维）：外部 watchdog 只看本文件 mtime 即可判断引擎存活性。"""
+        """心跳文件（运维）：外部 watchdog 只看本文件 mtime 即可判断引擎存活性。
+
+        内容为 JSON：{"ts": ..., "strategies": [{name, magic, timeframe}]}——
+        dashboard /api/engine/strategies 以此为"运行中策略"真源（如实上报，
+        不拿配置启用冒充在线）。watchdog 只读 mtime，内容升级对它透明。
+        """
         try:
+            import json
             import os
             os.makedirs(settings.LOG_DIR, exist_ok=True)
+            payload = {
+                "ts": int(settings.utc_now()),
+                "strategies": [
+                    {"name": s.name,
+                     "magic": int(getattr(s, "magic", 0) or 0),
+                     "timeframe": getattr(s, "timeframe", "")}
+                    for s in self.strategies
+                ],
+            }
             with open(os.path.join(settings.LOG_DIR, "heartbeat.txt"), "w",
                       encoding="utf-8") as f:
-                f.write(f"{int(settings.utc_now())}\n")
-        except OSError:
+                json.dump(payload, f)
+        except (OSError, TypeError, ValueError):
             pass
 
     def _sleep(self, seconds: float) -> None:
